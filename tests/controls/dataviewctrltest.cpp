@@ -17,6 +17,8 @@
 
 #include "wx/app.h"
 #include "wx/dataview.h"
+#include "wx/uiaction.h"
+
 #ifdef __WXGTK__
     #include "wx/stopwatch.h"
 #endif // __WXGTK__
@@ -171,6 +173,15 @@ TEST_CASE_METHOD(MultiSelectDataViewCtrlTestCase,
                  "wxDVC::DeleteSelected",
                  "[wxDataViewCtrl][delete]")
 {
+#ifdef __WXGTK__
+    wxString useASAN;
+    if ( wxGetEnv("wxUSE_ASAN", &useASAN) && useASAN == "1" )
+    {
+        WARN("Skipping test resulting in a memory leak report with wxGTK");
+        return;
+    }
+#endif // __WXGTK__
+
     wxDataViewItemArray sel;
     sel.push_back(m_child1);
     sel.push_back(m_grandchild);
@@ -329,9 +340,18 @@ TEST_CASE_METHOD(SingleSelectDataViewCtrlTestCase,
     m_dvc->EnsureVisible(last);
 
 #ifdef __WXGTK__
-    // And again to let it scroll the correct items into view.
-    wxYield();
-#endif
+    // Wait for the list control to be relaid out.
+    wxStopWatch sw;
+    while ( m_dvc->GetTopItem() == m_root )
+    {
+        if ( sw.Time() > 500 )
+        {
+            WARN("Timed out waiting for wxDataViewCtrl layout");
+            break;
+        }
+        wxYield();
+    }
+#endif // __WXGTK__
 
     // Check that this was indeed the case.
     const wxDataViewItem top = m_dvc->GetTopItem();
@@ -393,5 +413,27 @@ TEST_CASE_METHOD(MultiColumnsDataViewCtrlTestCase,
     CHECK( m_lastColumn->GetWidth() <= lastColumnMaxWidth );
     CHECK( m_lastColumn->GetWidth() >= lastColumnMinWidth );
 }
+
+#if wxUSE_UIACTIONSIMULATOR
+
+TEST_CASE_METHOD(SingleSelectDataViewCtrlTestCase,
+                 "wxDVC::KeyEvents",
+                 "[wxDataViewCtrl][event]")
+{
+    if ( !EnableUITests() )
+        return;
+
+    EventCounter keyEvents(m_dvc, wxEVT_KEY_DOWN);
+
+    m_dvc->SetFocus();
+
+    wxUIActionSimulator sim;
+    sim.Char(WXK_DOWN);
+    wxYield();
+
+    CHECK( keyEvents.GetCount() == 1 );
+}
+
+#endif // wxUSE_UIACTIONSIMULATOR
 
 #endif //wxUSE_DATAVIEWCTRL

@@ -439,7 +439,7 @@ wxRibbonToolBarToolBase* wxRibbonToolBar::GetToolByPos(wxCoord x, wxCoord y)cons
         for ( size_t t = 0; t < tool_count; ++t )
         {
             wxRibbonToolBarToolBase* tool = group->tools.Item(t);
-            wxRect rect(tool->position, tool->size);
+            wxRect rect(group->position + tool->position, tool->size);
             if(rect.Contains(x, y))
             {
                 return tool;
@@ -535,8 +535,7 @@ wxRect wxRibbonToolBar::GetToolRect(int tool_id)const
             wxRibbonToolBarToolBase* tool = group->tools.Item(t);
             if (tool->id == tool_id)
             {
-                wxRect rect(tool->position.x, tool->position.y, tool->size.GetWidth(), tool->size.GetHeight());
-                return rect;
+                return wxRect(group->position + tool->position, tool->size);
             }
             ++pos;
         }
@@ -1078,7 +1077,9 @@ void wxRibbonToolBar::OnMouseMove(wxMouseEvent& evt)
 #if wxUSE_TOOLTIPS
     if(new_hover)
     {
-        SetToolTip(new_hover->help_string);
+        if (new_hover != m_hover_tool &&
+                !(new_hover->state & wxRIBBON_TOOLBAR_TOOL_DROPDOWN_ACTIVE))
+            SetToolTip(new_hover->help_string);
     }
     else if(GetToolTip())
     {
@@ -1088,10 +1089,10 @@ void wxRibbonToolBar::OnMouseMove(wxMouseEvent& evt)
 
     if(new_hover && new_hover->state & wxRIBBON_TOOLBAR_TOOL_DISABLED)
     {
+        m_hover_tool = new_hover;
         new_hover = NULL; // A disabled tool can not be hilighted
     }
-
-    if(new_hover != m_hover_tool)
+    else if(new_hover != m_hover_tool)
     {
         if(m_hover_tool)
         {
@@ -1143,6 +1144,7 @@ void wxRibbonToolBar::OnMouseDown(wxMouseEvent& evt)
         m_active_tool = m_hover_tool;
         m_active_tool->state |=
             (m_active_tool->state & wxRIBBON_TOOLBAR_TOOL_HOVER_MASK) << 2;
+        UnsetToolTip();
         Refresh(false);
     }
 }

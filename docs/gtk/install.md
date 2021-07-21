@@ -17,9 +17,8 @@ install instructions just do the following in wxWidgets directory:
     > cd buildgtk
     > ../configure --with-gtk
     > make
-    > su <type root password>
-    > make install
-    > ldconfig
+    > sudo make install
+    > sudo ldconfig
 
 [if you get "ldconfig: command not found", try using "/sbin/ldconfig"]
 
@@ -28,9 +27,8 @@ the buildgtk directory, but they may not be available to other users.
 
 If you want to remove wxWidgets on Unix you can do this:
 
-    > su <type root password>
-    > make uninstall
-    > ldconfig
+    > sudo make uninstall
+    > sudo ldconfig
 
 Note that by default, GTK 3 is used. GTK 2 can be specified
 with --with-gtk=2.
@@ -127,10 +125,11 @@ libraries, wxWidgets also provides built-in versions, that can be
 linked into wx libraries themselves, which can be useful to
 minimize external dependencies.
 
-    --disable-sys-libs      Don't use system libraries at all.
-                            Use built-in ones when possible or
-                            disable support for the corresponding
-                            feature otherwise.
+    --disable-sys-libs      Don't use system libraries when there is
+                            a built-in version included in wxWidgets.
+                            Note that other system libraries can,
+                            and typically will, still be used if
+                            found.
 
     --without-libpng        Disables PNG image format code.
                             Don't use libpng (although GTK
@@ -147,6 +146,9 @@ minimize external dependencies.
 
     --without-liblzma       Disable LZMA compression support.
                             Don't use liblzma.
+
+    --without-libcurl       Don't use libcurl even if it's available.
+                            Disables wxWebRequest.
 
     --without-opengl        Disable OpenGL integration with wxGLCanvas.
                             Don't use OpenGL or EGL libraries.

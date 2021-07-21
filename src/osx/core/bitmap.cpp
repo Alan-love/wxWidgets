@@ -1,3 +1,7 @@
+
+
+
+
 /////////////////////////////////////////////////////////////////////////////
 // Name:        src/osx/core/bitmap.cpp
 // Purpose:     wxBitmap
@@ -672,13 +676,25 @@ CGImageRef wxBitmapRefData::CreateCGImage() const
 
         if ( m_bitmapMask )
         {
+            // First apply mask to image
             CGImageRef imageMask = CGBitmapContextCreateImage(m_bitmapMask->GetHBITMAP());
-            CGImageRef imageBmp = image;
+            CGImageRef imageMasked = CGImageCreateWithMask(image, imageMask);
 
-            image = CGImageCreateWithMask(imageBmp, imageMask);
+            // Convert masked image to plain ARGB image without mask
+            int w = GetWidth();
+            int h = GetHeight();
+            CGContextRef hBmpAlpha = CGBitmapContextCreate(NULL, w, h, 8, GetBytesPerRow(), wxMacGetGenericRGBColorSpace(),                   kCGImageAlphaPremultipliedFirst);
+            CGRect r = CGRectMake(0, 0, w, h);
+            CGContextDrawImage(hBmpAlpha, r, imageMasked);
+            CGContextTranslateCTM(hBmpAlpha, 0, h);
+            CGContextScaleCTM(hBmpAlpha, GetScaleFactor(), -GetScaleFactor());
 
-            CGImageRelease(imageBmp);
+            CGImageRelease(imageMasked);
             CGImageRelease(imageMask);
+
+            CGImageRelease(image);
+            image = CGBitmapContextCreateImage(hBmpAlpha);
+            CGContextRelease(hBmpAlpha);
         }
     }
     else
@@ -893,7 +909,7 @@ IconRef wxBitmap::GetIconRef() const
 IconRef wxBitmap::CreateIconRef() const
 {
     IconRef icon = GetIconRef();
-    __Verify_noErr(AcquireIconRef(icon));
+    wxOSX_VERIFY_NOERR(AcquireIconRef(icon));
     return icon;
 }
 #endif
@@ -902,6 +918,13 @@ wxBitmap::wxBitmap(WXImage image)
 {
     (void)Create(image);
 }
+
+#if wxOSX_USE_COCOA
+wxBitmap::wxBitmap(const wxCursor &cursor)
+{
+    m_refData = new wxBitmapRefData( wxOSXGetNSImageFromNSCursor( cursor.GetHCURSOR() ) );
+}
+#endif
 
 bool wxBitmap::Create(WXImage image)
 {
@@ -1131,10 +1154,9 @@ wxBitmap::wxBitmap(const wxImage& image, int depth, double scale)
     {
         bool hasMask = image.HasMask();
         bool hasAlpha = image.HasAlpha();
-        bool wantsAlpha = hasMask || hasAlpha ;
 
         // convert this bitmap to use its alpha channel
-        if ( wantsAlpha )
+        if ( hasAlpha )
             UseAlpha();
 
         const unsigned char *sourcePixels = image.GetData();
@@ -1169,22 +1191,15 @@ wxBitmap::wxBitmap(const wxImage& image, int depth, double scale)
                 unsigned char * destinationMask = destinationMaskRowStart;
                 for (int x = 0; x < width; x++)
                 {
-                    bool isMasked = false;
-
                     if ( hasMask )
                     {
-                        if ( sourcePixels[0] == mr && sourcePixels[1] == mg && sourcePixels[2] == mb )
-                            isMasked = true;
+                        bool isMasked = sourcePixels[0] == mr && sourcePixels[1] == mg && sourcePixels[2] == mb;
                         *destinationMask++ = isMasked ? wxIMAGE_ALPHA_TRANSPARENT : wxIMAGE_ALPHA_OPAQUE ;
                     }
 
-                    if ( wantsAlpha )
+                    if ( hasAlpha )
                     {
-                        unsigned char a;
-                        if ( hasAlpha )
-                            a = *sourceAlpha++;
-                        else
-                            a = isMasked ? wxIMAGE_ALPHA_TRANSPARENT : wxIMAGE_ALPHA_OPAQUE;
+                        unsigned char a = *sourceAlpha++;
 
                         *destination++ = a ;
 #if wxOSX_USE_PREMULTIPLIED_ALPHA
@@ -1293,6 +1308,7 @@ wxImage wxBitmap::ConvertToImage() const
             r = ((color&0x0000FF00) >> 8) ;
             a = (color&0x000000FF);
 #endif
+            bool isMasked = false;
             if ( hasMask )
             {
                 if ( *maskp++ == 0x00 )
@@ -1300,6 +1316,7 @@ wxImage wxBitmap::ConvertToImage() const
                     r = MASK_RED ;
                     g = MASK_GREEN ;
                     b = MASK_BLUE ;
+                    isMasked = true;
                 }
                 else if ( r == MASK_RED && g == MASK_GREEN && b == MASK_BLUE )
                     b = MASK_BLUE_REPLACEMENT ;
@@ -1310,7 +1327,7 @@ wxImage wxBitmap::ConvertToImage() const
                 *alpha++ = a ;
 #if wxOSX_USE_PREMULTIPLIED_ALPHA
                 // this must be non-premultiplied data
-                if ( !hasMask && a != 0xFF && a!= 0 )
+                if ( !isMasked && a != 0xFF && a!= 0 )
                 {
                     r = r * 255 / a;
                     g = g * 255 / a;
@@ -1401,19 +1418,19 @@ bool wxBitmap::HasAlpha() const
 }
 
 #if WXWIN_COMPATIBILITY_3_0
-void wxBitmap::SetWidth(int w)
+void wxBitmap::SetWidth(int WXUNUSED_UNLESS_DEBUG(w))
 {
     AllocExclusive();
     wxASSERT_MSG( GetWidth() == w, "Changing the bitmap width is not supported");
 }
 
-void wxBitmap::SetHeight(int h)
+void wxBitmap::SetHeight(int WXUNUSED_UNLESS_DEBUG(h))
 {
     AllocExclusive();
     wxASSERT_MSG( GetHeight() == h, "Changing the bitmap height is not supported");
 }
 
-void wxBitmap::SetDepth(int d)
+void wxBitmap::SetDepth(int WXUNUSED_UNLESS_DEBUG(d))
 {
     AllocExclusive();
     wxASSERT_MSG( d == -1 || GetDepth() == d, "Changing the bitmap depth is not supported");
@@ -1897,7 +1914,7 @@ bool wxICNSResourceHandler::LoadFile(wxBitmap *bitmap,
     {
         IconRef iconRef = NULL ;
         
-        __Verify_noErr(GetIconRef( kOnSystemDisk, kSystemIconsCreator, theId, &iconRef )) ;
+        wxOSX_VERIFY_NOERR(GetIconRef( kOnSystemDisk, kSystemIconsCreator, theId, &iconRef )) ;
         img = wxOSXGetNSImageFromIconRef(iconRef);
     }
     else
@@ -1965,6 +1982,7 @@ bool wxBundleResourceHandler::LoadFile(wxBitmap *bitmap,
         {
             bitmap->Create(image,scale);
             CGImageRelease(image);
+            return true;
         }
     }
         

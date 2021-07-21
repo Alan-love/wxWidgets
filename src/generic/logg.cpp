@@ -233,7 +233,7 @@ wxString wxLogGui::GetTitle() const
             titleFormat = _("%s Information");
     }
 
-    return wxString::Format(titleFormat, wxTheApp->GetAppDisplayName());
+    return wxString::Format(titleFormat, wxTheApp ? wxTheApp->GetAppDisplayName() : _("Application"));
 }
 
 void
@@ -342,7 +342,7 @@ void wxLogGui::DoLogRecord(wxLogLevel level,
             {
                 m_aMessages.Add(msg);
                 m_aSeverity.Add(wxLOG_Message);
-                m_aTimes.Add((long)info.timestamp);
+                m_aTimes.Add((long)(info.timestampMS / 1000));
                 m_bHasMessages = true;
             }
             break;
@@ -395,7 +395,7 @@ void wxLogGui::DoLogRecord(wxLogLevel level,
 
             m_aMessages.Add(msg);
             m_aSeverity.Add((int)level);
-            m_aTimes.Add((long)info.timestamp);
+            m_aTimes.Add((long)(info.timestampMS / 1000));
             m_bHasMessages = true;
             break;
 
@@ -570,7 +570,7 @@ void wxLogFrame::OnSave(wxCommandEvent& WXUNUSED(event))
         wxLogError(_("Can't save log contents to file."));
     }
     else {
-        wxLogStatus((wxFrame*)this, _("Log saved to the file '%s'."), filename.c_str());
+        wxLogStatus((wxFrame*)this, _("Log saved to the file '%s'."), filename);
     }
 }
 #endif // CAN_SAVE_FILES
@@ -1009,7 +1009,7 @@ static int OpenLogFile(wxFile& file, wxString *pFilename, wxWindow *parent)
         bool bAppend = false;
         wxString strMsg;
         strMsg.Printf(_("Append log to file '%s' (choosing [No] will overwrite it)?"),
-                      filename.c_str());
+                      filename);
         switch ( wxMessageBox(strMsg, _("Question"),
                               wxICON_QUESTION | wxYES_NO | wxCANCEL) ) {
             case wxYES:

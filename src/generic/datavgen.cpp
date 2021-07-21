@@ -780,12 +780,25 @@ public:
     void OnPaint( wxPaintEvent &event );
     void OnCharHook( wxKeyEvent &event );
     void OnChar( wxKeyEvent &event );
-    void OnVerticalNavigation(const wxKeyEvent& event, int delta);
     void OnLeftKey(wxKeyEvent& event);
     void OnRightKey(wxKeyEvent& event);
     void OnMouse( wxMouseEvent &event );
     void OnSetFocus( wxFocusEvent &event );
     void OnKillFocus( wxFocusEvent &event );
+
+    // Go to the specified row, i.e. make it current and change or extend the
+    // selection extended depending on the modifier keys flags in the keyboard
+    // state.
+    //
+    // The row must be valid.
+    void GoToRow(const wxKeyboardState& state, unsigned int row);
+
+    // Go to the item at position delta rows away (delta may be positive or
+    // negative) from the current row.
+    //
+    // If adding delta would result in an invalid item, it's clamped to the
+    // valid items range.
+    void GoToRelativeRow(const wxKeyboardState& kbdState, int delta);
 
     void UpdateDisplay();
     void RecalculateDisplay();
@@ -1955,15 +1968,15 @@ wxDataViewTreeNode::PutChildInSortOrder(wxDataViewMainWindow* window,
     // Check if we actually need to move the node.
     bool locationChanged = false;
 
-    if ( oldLocation == 0 )
+    // Compare with next node
+    if ( oldLocation != hi - 1)
     {
-        // Compare with the next item (as we return early in the case of only a
-        // single child, we know that there is one) to check if the item is now
-        // out of order.
-        if ( !cmp(childNode, nodes[1]) )
+        if ( !cmp(childNode, nodes[oldLocation + 1]) )
             locationChanged = true;
     }
-    else // Compare with the previous item.
+
+    // Compare with previous node
+    if ( !locationChanged && oldLocation > 0 )
     {
         if ( !cmp(nodes[oldLocation - 1], childNode) )
             locationChanged = true;
@@ -4609,11 +4622,11 @@ void wxDataViewMainWindow::OnChar( wxKeyEvent &event )
             break;
 
         case WXK_UP:
-            OnVerticalNavigation(event, -1);
+            GoToRelativeRow(event, -1);
             break;
 
         case WXK_DOWN:
-            OnVerticalNavigation(event, +1);
+            GoToRelativeRow(event, +1);
             break;
 
         case '+':
@@ -4645,19 +4658,19 @@ void wxDataViewMainWindow::OnChar( wxKeyEvent &event )
             break;
 
         case WXK_END:
-            OnVerticalNavigation(event, +(int)GetRowCount());
+            GoToRelativeRow(event, +(int)GetRowCount());
             break;
 
         case WXK_HOME:
-            OnVerticalNavigation(event, -(int)GetRowCount());
+            GoToRelativeRow(event, -(int)GetRowCount());
             break;
 
         case WXK_PAGEUP:
-            OnVerticalNavigation(event, -(GetCountPerPage() - 1));
+            GoToRelativeRow(event, -(GetCountPerPage() - 1));
             break;
 
         case WXK_PAGEDOWN:
-            OnVerticalNavigation(event, +(GetCountPerPage() - 1));
+            GoToRelativeRow(event, +(GetCountPerPage() - 1));
             break;
 
         default:
@@ -4665,7 +4678,7 @@ void wxDataViewMainWindow::OnChar( wxKeyEvent &event )
     }
 }
 
-void wxDataViewMainWindow::OnVerticalNavigation(const wxKeyEvent& event, int delta)
+void wxDataViewMainWindow::GoToRelativeRow(const wxKeyboardState& kbdState, int delta)
 {
     // if there is no selection, we cannot move it anywhere
     if (!HasCurrentRow() || IsEmpty())
@@ -4681,15 +4694,21 @@ void wxDataViewMainWindow::OnVerticalNavigation(const wxKeyEvent& event, int del
     if ( newRow >= rowCount )
         newRow = rowCount - 1;
 
+    GoToRow(kbdState, newRow);
+}
+
+void
+wxDataViewMainWindow::GoToRow(const wxKeyboardState& kbdState,
+                              unsigned int newCurrent)
+{
     unsigned int oldCurrent = m_currentRow;
-    unsigned int newCurrent = (unsigned int)newRow;
 
     if ( newCurrent == oldCurrent )
         return;
 
     // in single selection we just ignore Shift as we can't select several
     // items anyhow
-    if ( event.ShiftDown() && !IsSingleSel() )
+    if ( kbdState.ShiftDown() && !IsSingleSel() )
     {
         RefreshRow( oldCurrent );
 
@@ -4714,12 +4733,12 @@ void wxDataViewMainWindow::OnVerticalNavigation(const wxKeyEvent& event, int del
         RefreshRow( oldCurrent );
 
         // all previously selected items are unselected unless ctrl is held
-        if ( !event.ControlDown() )
+        if ( !kbdState.ControlDown() )
             UnselectAllRows();
 
         ChangeCurrentRow( newCurrent );
 
-        if ( !event.ControlDown() )
+        if ( !kbdState.ControlDown() )
         {
             SelectRow( m_currentRow, true );
             SendSelectionChangedEvent(GetItemByRow(m_currentRow));
@@ -4772,12 +4791,7 @@ void wxDataViewMainWindow::OnLeftKey(wxKeyEvent& event)
                 int parent = GetRowByItem( parent_node->GetItem() );
                 if ( parent >= 0 )
                 {
-                    unsigned int row = m_currentRow;
-                    SelectRow( row, false);
-                    SelectRow( parent, true );
-                    ChangeCurrentRow( parent );
-                    GetOwner()->EnsureVisibleRowCol( parent, -1 );
-                    SendSelectionChangedEvent( parent_node->GetItem() );
+                    GoToRow(event, parent);
                 }
             }
         }
@@ -4805,12 +4819,7 @@ void wxDataViewMainWindow::OnRightKey(wxKeyEvent& event)
             else
             {
                 // if the node is already open, we move the selection to the first child
-                unsigned int row = m_currentRow;
-                SelectRow( row, false );
-                SelectRow( row + 1, true );
-                ChangeCurrentRow( row + 1 );
-                GetOwner()->EnsureVisibleRowCol( row + 1, -1 );
-                SendSelectionChangedEvent( GetItemByRow(row+1) );
+                GoToRelativeRow(event, +1);
             }
         }
         else
@@ -4875,7 +4884,7 @@ bool wxDataViewMainWindow::TryAdvanceCurrentColumn(wxDataViewTreeNode *node, wxK
             {
                 // go to the first column of the next row:
                 idx = 0;
-                OnVerticalNavigation(wxKeyEvent()/*dummy*/, +1);
+                GoToRelativeRow(wxKeyboardState()/*dummy*/, +1);
             }
             else
             {
@@ -4893,7 +4902,7 @@ bool wxDataViewMainWindow::TryAdvanceCurrentColumn(wxDataViewTreeNode *node, wxK
             {
                 // go to the last column of the previous row:
                 idx = (int)GetOwner()->GetColumnCount() - 1;
-                OnVerticalNavigation(wxKeyEvent()/*dummy*/, -1);
+                GoToRelativeRow(wxKeyboardState()/*dummy*/, -1);
             }
             else
             {
@@ -5575,6 +5584,14 @@ bool wxDataViewCtrl::Create(wxWindow *parent,
     return true;
 }
 
+wxWindowList wxDataViewCtrl::GetCompositeWindowParts() const
+{
+    wxWindowList parts;
+    parts.push_back(m_headerArea); // It's ok to add it even if it's null.
+    parts.push_back(m_clientArea);
+    return parts;
+}
+
 wxBorder wxDataViewCtrl::GetDefaultBorder() const
 {
     return wxBORDER_THEME;
@@ -5652,12 +5669,12 @@ void wxDataViewCtrl::OnDPIChanged(wxDPIChangedEvent& event)
     {
         int minWidth = m_cols[i]->GetMinWidth();
         if ( minWidth > 0 )
-            minWidth = minWidth * event.GetNewDPI().x / event.GetOldDPI().x;
+            minWidth = event.ScaleX(minWidth);
         m_cols[i]->SetMinWidth(minWidth);
 
         int width = m_cols[i]->WXGetSpecifiedWidth();
         if ( width > 0 )
-            width = width * event.GetNewDPI().x / event.GetOldDPI().x;
+            width = event.ScaleX(width);
         m_cols[i]->SetWidth(width);
     }
 }
@@ -5670,15 +5687,11 @@ void wxDataViewCtrl::SetFocus()
 
 bool wxDataViewCtrl::SetFont(const wxFont & font)
 {
-    if (!wxControl::SetFont(font))
+    if (!BaseType::SetFont(font))
         return false;
-
-    if (m_headerArea)
-        m_headerArea->SetFont(font);
 
     if (m_clientArea)
     {
-        m_clientArea->SetFont(font);
         m_clientArea->SetRowHeight(m_clientArea->GetDefaultRowHeight());
     }
 
@@ -5687,6 +5700,35 @@ bool wxDataViewCtrl::SetFont(const wxFont & font)
         InvalidateColBestWidths();
         Layout();
     }
+
+    return true;
+}
+
+bool wxDataViewCtrl::SetForegroundColour(const wxColour& colour)
+{
+    // Previous versions of this class, not using wxCompositeWindow, as well as
+    // the native versions of this control, don't change the header foreground
+    // when this method is called and this could be more desirable in practice,
+    // as well we being more compatible, so skip calling the base class version
+    // that would change it as well and change only the main items area colour
+    // here too.
+    if ( !wxDataViewCtrlBase::SetForegroundColour(colour) )
+        return false;
+
+    if ( m_clientArea )
+        m_clientArea->SetForegroundColour(colour);
+
+    return true;
+}
+
+bool wxDataViewCtrl::SetBackgroundColour(const wxColour& colour)
+{
+    // See SetForegroundColour() above.
+    if ( !wxDataViewCtrlBase::SetBackgroundColour(colour) )
+        return false;
+
+    if ( m_clientArea )
+        m_clientArea->SetBackgroundColour(colour);
 
     return true;
 }

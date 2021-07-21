@@ -43,7 +43,7 @@ wx_top_builddir = @wx_top_builddir@
 
 DESTDIR = 
 WX_RELEASE = 3.1
-WX_VERSION = $(WX_RELEASE).5
+WX_VERSION = $(WX_RELEASE).6
 LIBDIRNAME = $(wx_top_builddir)/lib
 BENCH_CXXFLAGS = $(WX_CPPFLAGS) -D__WX$(TOOLKIT)__ $(__WXUNIV_DEFINE_p) \
 	$(__DEBUG_DEFINE_p) $(__EXCEPTIONS_DEFINE_p) $(__RTTI_DEFINE_p) \
@@ -57,6 +57,7 @@ BENCH_OBJECTS =  \
 	bench_ipcclient.o \
 	bench_log.o \
 	bench_mbconv.o \
+	bench_regex.o \
 	bench_strings.o \
 	bench_tls.o \
 	bench_printfbench.o
@@ -298,6 +299,9 @@ bench_log.o: $(srcdir)/log.cpp
 
 bench_mbconv.o: $(srcdir)/mbconv.cpp
 	$(CXXC) -c -o $@ $(BENCH_CXXFLAGS) $(srcdir)/mbconv.cpp
+
+bench_regex.o: $(srcdir)/regex.cpp
+	$(CXXC) -c -o $@ $(BENCH_CXXFLAGS) $(srcdir)/regex.cpp
 
 bench_strings.o: $(srcdir)/strings.cpp
 	$(CXXC) -c -o $@ $(BENCH_CXXFLAGS) $(srcdir)/strings.cpp

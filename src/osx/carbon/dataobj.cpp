@@ -132,7 +132,7 @@ wxDataFormat::NativeFormat wxDataFormat::GetFormatForType(wxDataFormatId type)
 void wxDataFormat::SetType( wxDataFormatId dataType )
 {
     m_type = dataType;
-    m_format = GetFormatForType(dataType);
+    m_format = wxCFRetain(GetFormatForType(dataType));
     m_id = wxCFStringRef( m_format ).AsString();
 }
 
@@ -181,7 +181,7 @@ wxString wxDataFormat::GetId() const
 
 void wxDataFormat::SetId( NativeFormat format )
 {
-    m_format = format;
+    m_format = wxCFRetain(format);
     m_id = wxCFStringRef( m_format ).AsString();
     if ( m_id.StartsWith(privateUTIPrefix) )
         m_id = m_id.Mid(privateUTIPrefix.length());
@@ -228,15 +228,27 @@ void wxDataFormat::SetId( NativeFormat format )
 void wxDataFormat::SetId( const wxString& zId )
 {
     m_type = wxDF_PRIVATE;
-    m_id = zId;
-
     // in newer macOS version this must conform to a UTI
     // https://developer.apple.com/library/archive/documentation/General/Conceptual/DevPedia-CocoaCore/UniformTypeIdentifier.html
 
-    if ( zId.Find('.') != wxNOT_FOUND )
-        m_format = wxCFStringRef(zId);
+    // first filter characters
+    wxString utiString = zId;
+    wxString::iterator it;
+    for (it = utiString.begin(); it != utiString.end(); ++it)
+    {
+        wxUniChar c = *it;
+        if ( !( c >= 'A' && c <='Z') && !( c >= 'a' && c <='z') && !( c >= '0' && c <='9') &&
+            c != '.' && c !='-' )
+            *it= '-';
+    }
+
+    m_id = utiString;
+
+    // make sure it follows a reverse DNS notation
+    if ( utiString.Find('.') != wxNOT_FOUND )
+        m_format = wxCFStringRef(utiString);
     else
-        m_format = wxCFStringRef(privateUTIPrefix+zId);
+        m_format = wxCFStringRef(privateUTIPrefix+utiString);
 }
 
 bool wxDataFormat::operator==(const wxDataFormat& format) const
@@ -557,9 +569,9 @@ bool wxDataObject::CanReadFromSource( wxDataObject * source ) const
 
 void wxDataObject::AddSupportedTypes( CFMutableArrayRef cfarray, Direction dir) const
 {
-    size_t nFormats = GetFormatCount(wxDataObject::Set);
-    wxScopedArray<wxDataFormat> array(GetFormatCount());
-    GetAllFormats(array.get(), wxDataObject::Set);
+    size_t nFormats = GetFormatCount(dir);
+    wxScopedArray<wxDataFormat> array(nFormats);
+    GetAllFormats(array.get(), dir);
 
     for (size_t i = 0; i < nFormats; i++)
     {

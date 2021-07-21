@@ -252,10 +252,7 @@ public:
     virtual wxCoord OnMeasureItem( size_t item ) const wxOVERRIDE
     {
         // Simply demonstrate the ability to have variable-height items
-        if ( item & 1 )
-            return 36;
-        else
-            return 24;
+        return FromDIP( item & 1 ? 36 : 24 );
     }
 
     virtual wxCoord OnMeasureItemWidth( size_t WXUNUSED(item) ) const wxOVERRIDE
@@ -937,15 +934,15 @@ void MyFrame::OnComboBoxUpdate( wxCommandEvent& event )
 
     if ( event.GetEventType() == wxEVT_COMBOBOX )
     {
-        wxLogDebug("EVT_COMBOBOX(id=%i,selection=%i)",event.GetId(),event.GetSelection());
+        wxLogMessage("EVT_COMBOBOX(id=%i,selection=%i)",event.GetId(),event.GetSelection());
     }
     else if ( event.GetEventType() == wxEVT_TEXT )
     {
-        wxLogDebug("EVT_TEXT(id=%i,string=\"%s\")",event.GetId(),event.GetString());
+        wxLogMessage("EVT_TEXT(id=%i,string=\"%s\")",event.GetId(),event.GetString());
     }
     else if ( event.GetEventType() == wxEVT_TEXT_ENTER )
     {
-        wxLogDebug("EVT_TEXT_ENTER(id=%i,string=\"%s\")",
+        wxLogMessage("EVT_TEXT_ENTER(id=%i,string=\"%s\")",
                    event.GetId(), event.GetString());
     }
 }

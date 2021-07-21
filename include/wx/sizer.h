@@ -69,14 +69,26 @@ public:
         return *this;
     }
 
-    // some shortcuts for Align()
+    // this is just a shortcut for Align()
     wxSizerFlags& Centre() { return Align(wxALIGN_CENTRE); }
     wxSizerFlags& Center() { return Centre(); }
 
-    wxSizerFlags& CentreVertical() { return Align(wxALIGN_CENTRE_VERTICAL); }
+    // but all the remaining methods turn on the corresponding alignment flag
+    // without affecting the existing ones
+    wxSizerFlags& CentreVertical()
+    {
+        m_flags = (m_flags & ~wxALIGN_BOTTOM) | wxALIGN_CENTRE_VERTICAL;
+        return *this;
+    }
+
     wxSizerFlags& CenterVertical() { return CentreVertical(); }
 
-    wxSizerFlags& CentreHorizontal() { return Align(wxALIGN_CENTRE_HORIZONTAL); }
+    wxSizerFlags& CentreHorizontal()
+    {
+        m_flags = (m_flags & ~wxALIGN_RIGHT) | wxALIGN_CENTRE_HORIZONTAL;
+        return *this;
+    }
+
     wxSizerFlags& CenterHorizontal() { return CentreHorizontal(); }
 
     wxSizerFlags& Top()
@@ -225,6 +237,9 @@ public:
     int GetProportion() const { return m_proportion; }
     int GetFlags() const { return m_flags; }
     int GetBorderInPixels() const { return m_borderInPixels; }
+
+    // Disablee sizer flags (in)consistency asserts.
+    static void DisableConsistencyChecks();
 
 private:
 #ifdef wxNEEDS_BORDER_IN_PX
