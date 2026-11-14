@@ -2,7 +2,6 @@
 // Name:        src/msw/uiaction.cpp
 // Purpose:     wxUIActionSimulator implementation
 // Author:      Kevin Ollivier, Steven Lamerton, Vadim Zeitlin
-// Modified by:
 // Created:     2010-03-06
 // Copyright:   (c) Kevin Ollivier
 //              (c) 2010 Steven Lamerton
@@ -42,11 +41,12 @@ public:
         return &s_impl;
     }
 
-    virtual bool MouseMove(long x, long y) wxOVERRIDE;
-    virtual bool MouseDown(int button = wxMOUSE_BTN_LEFT) wxOVERRIDE;
-    virtual bool MouseUp(int button = wxMOUSE_BTN_LEFT) wxOVERRIDE;
+    virtual bool MouseMove(long x, long y) override;
+    virtual bool MouseDown(int button = wxMOUSE_BTN_LEFT) override;
+    virtual bool MouseUp(int button = wxMOUSE_BTN_LEFT) override;
+    virtual bool MouseWheel(int rotation, wxMouseWheelAxis axis) override;
 
-    virtual bool DoKey(int keycode, int modifiers, bool isDown) wxOVERRIDE;
+    virtual bool DoKey(int keycode, int modifiers, bool isDown) override;
 
 private:
     // This class has no public ctors, use Get() instead.
@@ -55,9 +55,28 @@ private:
     wxDECLARE_NO_COPY_CLASS(wxUIActionSimulatorMSWImpl);
 };
 
+int PhysicalButtonForLogicalButton(int button)
+{
+    if ( ::GetSystemMetrics(SM_SWAPBUTTON) )
+    {
+        switch ( button )
+        {
+            case wxMOUSE_BTN_LEFT:
+                return wxMOUSE_BTN_RIGHT;
+
+            case wxMOUSE_BTN_RIGHT:
+                return wxMOUSE_BTN_LEFT;
+        }
+    }
+
+    return button;
+}
+
 DWORD EventTypeForMouseButton(int button, bool isDown)
 {
-    switch (button)
+    // wxUIActionSimulator uses logical left/right buttons. mouse_event() needs
+    // the physical MSW button producing them when the user swaps buttons.
+    switch ( PhysicalButtonForLogicalButton(button) )
     {
         case wxMOUSE_BTN_LEFT:
             return isDown ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
@@ -105,6 +124,18 @@ bool wxUIActionSimulatorMSWImpl::MouseUp(int button)
     POINT p;
     wxGetCursorPosMSW(&p);
     mouse_event(EventTypeForMouseButton(button, false), p.x, p.y, 0, 0);
+    return true;
+}
+
+bool wxUIActionSimulatorMSWImpl::MouseWheel(int rotation, wxMouseWheelAxis axis)
+{
+    // Positive values mean rotating the wheel forward or to the right, which
+    // is the same convention as used by wx. Note that the negative values are
+    // passed as DWORD, but this is how this API works.
+    const DWORD flags = axis == wxMOUSE_WHEEL_HORIZONTAL ? MOUSEEVENTF_HWHEEL
+                                                         : MOUSEEVENTF_WHEEL;
+    mouse_event(flags, 0, 0, static_cast<DWORD>(rotation*WHEEL_DELTA), 0);
+
     return true;
 }
 

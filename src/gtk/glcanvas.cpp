@@ -2,7 +2,6 @@
 // Name:        src/gtk/glcanvas.cpp
 // Purpose:     wxGLCanvas, for using OpenGL/Mesa with wxWidgets and GTK
 // Author:      Robert Roebling
-// Modified by:
 // Created:     17/08/98
 // Copyright:   (c) Robert Roebling
 // Licence:     wxWindows licence
@@ -15,13 +14,12 @@
 
 #include "wx/glcanvas.h"
 
-#include "wx/gtk/private/wrapgtk.h"
-#ifdef GDK_WINDOWING_WAYLAND
-#include <gdk/gdkwayland.h>
+#ifndef WX_PRECOMP
+    #include "wx/log.h"
 #endif
-#ifdef GDK_WINDOWING_X11
-#include <gdk/gdkx.h>
-#endif
+
+#include "wx/gtk/private/wrapgdk.h"
+#include "wx/gtk/private/backend.h"
 
 #ifdef __WXGTK3__
 extern "C" {
@@ -44,40 +42,6 @@ static gboolean draw(GtkWidget* widget, cairo_t* cr, wxGLCanvas* win)
 }
 #endif // __WXGTK3__
 
-//-----------------------------------------------------------------------------
-// emission hook for "parent-set"
-//-----------------------------------------------------------------------------
-
-#if !wxUSE_GLCANVAS_EGL
-extern "C" {
-static gboolean
-parent_set_hook(GSignalInvocationHint*, guint, const GValue* param_values, void* data)
-{
-    wxGLCanvas* win = (wxGLCanvas*)data;
-    if (g_value_peek_pointer(&param_values[0]) == win->m_wxwindow)
-    {
-        const XVisualInfo* xvi = static_cast<XVisualInfo*>(win->GetXVisualInfo());
-        GdkVisual* visual = gtk_widget_get_visual(win->m_wxwindow);
-        if (GDK_VISUAL_XVISUAL(visual)->visualid != xvi->visualid)
-        {
-            GdkScreen* screen = gtk_widget_get_screen(win->m_wxwindow);
-            visual = gdk_x11_screen_lookup_visual(screen, xvi->visualid);
-#ifdef __WXGTK3__
-            gtk_widget_set_visual(win->m_wxwindow, visual);
-#else
-            GdkColormap* colormap = gdk_colormap_new(visual, false);
-            gtk_widget_set_colormap(win->m_wxwindow, colormap);
-            g_object_unref(colormap);
-#endif
-        }
-        // remove hook
-        return false;
-    }
-    return true;
-}
-}
-#endif
-
 //---------------------------------------------------------------------------
 // wxGlCanvas
 //---------------------------------------------------------------------------
@@ -92,9 +56,6 @@ wxGLCanvas::wxGLCanvas(wxWindow *parent,
                        long style,
                        const wxString& name,
                        const wxPalette& palette)
-#if WXWIN_COMPATIBILITY_2_8
-    : m_createImplicitContext(false)
-#endif
 {
     Create(parent, dispAttrs, id, pos, size, style, name, palette);
 }
@@ -107,81 +68,35 @@ wxGLCanvas::wxGLCanvas(wxWindow *parent,
                        long style,
                        const wxString& name,
                        const wxPalette& palette)
-#if WXWIN_COMPATIBILITY_2_8
-    : m_createImplicitContext(false)
-#endif
 {
     Create(parent, id, pos, size, style, name, attribList, palette);
 }
-
-#if WXWIN_COMPATIBILITY_2_8
-
-wxGLCanvas::wxGLCanvas(wxWindow *parent,
-                       wxWindowID id,
-                       const wxPoint& pos,
-                       const wxSize& size,
-                       long style,
-                       const wxString& name,
-                       const int *attribList,
-                       const wxPalette& palette)
-    : m_createImplicitContext(true)
-{
-    m_sharedContext = NULL;
-    m_sharedContextOf = NULL;
-
-    Create(parent, id, pos, size, style, name, attribList, palette);
-}
-
-wxGLCanvas::wxGLCanvas(wxWindow *parent,
-                       const wxGLContext *shared,
-                       wxWindowID id,
-                       const wxPoint& pos,
-                       const wxSize& size,
-                       long style,
-                       const wxString& name,
-                       const int *attribList,
-                       const wxPalette& palette)
-    : m_createImplicitContext(true)
-{
-    m_sharedContext = const_cast<wxGLContext *>(shared);
-
-    Create(parent, id, pos, size, style, name, attribList, palette);
-}
-
-wxGLCanvas::wxGLCanvas(wxWindow *parent,
-                       const wxGLCanvas *shared,
-                       wxWindowID id,
-                       const wxPoint& pos, const wxSize& size,
-                       long style, const wxString& name,
-                       const int *attribList,
-                       const wxPalette& palette )
-    : m_createImplicitContext(true)
-{
-    m_sharedContext = NULL;
-    m_sharedContextOf = const_cast<wxGLCanvas *>(shared);
-
-    Create(parent, id, pos, size, style, name, attribList, palette);
-}
-
-#endif // WXWIN_COMPATIBILITY_2_8
 
 static bool IsAvailable()
 {
+#if defined(__WXGTK3__) && (defined(GDK_WINDOWING_WAYLAND) || defined(GDK_WINDOWING_X11))
+    GdkDisplay* display = gdk_display_get_default();
+#endif
+
 #ifdef GDK_WINDOWING_WAYLAND
-    if ( GDK_IS_WAYLAND_DISPLAY(gdk_display_get_default()) )
+    if (wxGTKImpl::IsWayland(display))
     {
-#if wxUSE_GLCANVAS_EGL
+#ifdef wxHAS_EGL
         return true;
 #else
         wxSafeShowMessage(_("Fatal Error"), _("This program wasn't compiled with EGL support required under Wayland, either\ninstall EGL libraries and rebuild or run it under X11 backend by setting\nenvironment variable GDK_BACKEND=x11 before starting your program."));
         return false;
-#endif // wxUSE_GLCANVAS_EGL
+#endif // wxHAS_EGL/!wxHAS_EGL
     }
 #endif // GDK_WINDOWING_WAYLAND
 
 #ifdef GDK_WINDOWING_X11
-    if ( GDK_IS_X11_DISPLAY(gdk_display_get_default()) )
+#ifdef __WXGTK3__
+    if (wxGTKImpl::IsX11(display))
+#endif
+    {
         return true;
+    }
 #endif
 
     wxSafeShowMessage(_("Fatal Error"), _("wxGLCanvas is only supported on Wayland and X11 currently.  You may be able to\nwork around this by setting environment variable GDK_BACKEND=x11 before\nstarting your program."));
@@ -235,20 +150,16 @@ bool wxGLCanvas::Create(wxWindow *parent,
     if ( !InitVisual(dispAttrs) )
         return false;
 
-    // watch for the "parent-set" signal on m_wxwindow so we can set colormap
-    // before m_wxwindow is realized (which will occur before
-    // wxWindow::Create() returns if parent is already visible)
-#if !wxUSE_GLCANVAS_EGL
-    unsigned sig_id = g_signal_lookup("parent-set", GTK_TYPE_WIDGET);
-    g_signal_add_emission_hook(sig_id, 0, parent_set_hook, this, NULL);
-#endif
+    if ( !wxWindow::Create(parent, id, pos, size, style, name) )
+        return false;
 
-    wxWindow::Create( parent, id, pos, size, style, name );
 #ifdef __WXGTK3__
     g_signal_connect(m_wxwindow, "draw", G_CALLBACK(draw), this);
 #endif
 
+    wxGCC_WARNING_SUPPRESS(deprecated-declarations)
     gtk_widget_set_double_buffered(m_wxwindow, false);
+    wxGCC_WARNING_RESTORE(deprecated-declarations)
 
     return true;
 }
@@ -260,37 +171,70 @@ bool wxGLCanvas::SetBackgroundStyle(wxBackgroundStyle /* style */)
 
 unsigned long wxGLCanvas::GetXWindow() const
 {
+#if defined(GDK_WINDOWING_X11)
     GdkWindow* window = GTKGetDrawingWindow();
     return window ? GDK_WINDOW_XID(window) : 0;
+#else
+    return 0;
+#endif
 }
 
 void wxGLCanvas::GTKHandleRealized()
 {
-    BaseType::GTKHandleRealized();
+    wxGLCanvasUnix::GTKHandleRealized();
 
-#if WXWIN_COMPATIBILITY_2_8
-    GTKInitImplicitContext();
-#endif
-#if wxUSE_GLCANVAS_EGL
-    CreateSurface();
-#endif
+    CallOnRealized();
+
     SendSizeEvent();
 }
 
-#if WXWIN_COMPATIBILITY_2_8
-
-void wxGLCanvas::GTKInitImplicitContext()
+void wxGLCanvas::GTKHandleUnrealized()
 {
-    if ( !m_glContext && m_createImplicitContext )
-    {
-        wxGLContext *share = m_sharedContext;
-        if ( !share && m_sharedContextOf )
-            share = m_sharedContextOf->m_glContext;
+    CallOnUnrealized();
 
-        m_glContext = new wxGLContext(this, share);
-    }
+    wxGLCanvasUnix::GTKHandleUnrealized();
 }
 
-#endif // WXWIN_COMPATIBILITY_2_8
+void wxGLCanvas::GTKOnWidgetCreated()
+{
+#ifdef GDK_WINDOWING_X11
+    // m_wxwindow doesn't have a parent yet, so use our parent widget to find
+    // the display and screen it is going to be on.
+    GtkWidget* const parentWidget = m_parent->m_widget;
+
+#ifdef __WXGTK3__
+    if ( !wxGTKImpl::IsX11(gtk_widget_get_display(parentWidget)) )
+        return;
+#endif
+
+    // Both GLX and EGL need the X window to use the visual of the chosen
+    // GLXFBConfig or EGLConfig, so set it now, before m_wxwindow is realized,
+    // which happens when it is added to the parent if the parent is already
+    // realized.
+    //
+    // Note that we always set it explicitly, even if it's the same as the
+    // default one, as otherwise m_wxwindow would inherit the visual of its
+    // parent, which may be different.
+    const unsigned long visualID = GetXVisualID();
+    if ( !visualID )
+        return;
+
+    GdkScreen* const screen = gtk_widget_get_screen(parentWidget);
+    GdkVisual* const visual = gdk_x11_screen_lookup_visual(screen, visualID);
+    if ( !visual )
+    {
+        wxLogDebug("Configured X visual %#lx not found", visualID);
+        return;
+    }
+
+#ifdef __WXGTK3__
+    gtk_widget_set_visual(m_wxwindow, visual);
+#else
+    GdkColormap* colormap = gdk_colormap_new(visual, false);
+    gtk_widget_set_colormap(m_wxwindow, colormap);
+    g_object_unref(colormap);
+#endif
+#endif // GDK_WINDOWING_X11
+}
 
 #endif // wxUSE_GLCANVAS

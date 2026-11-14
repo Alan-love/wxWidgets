@@ -78,8 +78,8 @@ void wxHtmlHelpFrame::Init(wxHtmlHelpData* data)
 {
     // Simply pass the pointer on to the help window
     m_Data = data;
-    m_HtmlHelpWin = NULL;
-    m_helpController = NULL;
+    m_HtmlHelpWin = nullptr;
+    m_helpController = nullptr;
     m_shouldPreventAppExit = false;
 }
 
@@ -192,11 +192,8 @@ void wxHtmlHelpFrame::AddGrabIfNeeded()
 
     // Check if there are any modal windows present,
     // in which case we need to add a grab.
-    for ( wxWindowList::iterator it = wxTopLevelWindows.begin();
-          it != wxTopLevelWindows.end();
-          ++it )
+    for ( const auto* win : wxTopLevelWindows )
     {
-        wxWindow *win = *it;
         wxDialog *dialog = wxDynamicCast(win, wxDialog);
 
         if (dialog && dialog->IsModal())

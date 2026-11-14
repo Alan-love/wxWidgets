@@ -2,7 +2,6 @@
 // Name:        src/osx/checklst.cpp
 // Purpose:     implementation of wxCheckListBox class
 // Author:      Stefan Csomor
-// Modified by:
 // Created:     1998-01-01
 // Copyright:   (c) Stefan Csomor
 // Licence:     wxWindows licence
@@ -55,15 +54,15 @@ bool wxCheckListBox::Create(
    long style,
    const wxValidator& validator,
    const wxString& name )
-{    
-    
+{
+
     wxASSERT_MSG( !(style & wxLB_MULTIPLE) || !(style & wxLB_EXTENDED),
                   wxT("only one of listbox selection modes can be specified") );
 
     if ( !wxCheckListBoxBase::Create( parent, id, pos, size, n, choices, style & ~(wxHSCROLL | wxVSCROLL), validator, name ) )
         return false;
 
-    int colwidth = 30;
+    int colwidth = 18;
     // TODO adapt the width according to the window variant
     m_checkColumn = GetListPeer()->InsertCheckColumn(0, wxEmptyString, true, wxALIGN_CENTER, colwidth);
 

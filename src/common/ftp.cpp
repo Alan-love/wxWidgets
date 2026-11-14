@@ -105,7 +105,7 @@ bool wxFTP::Connect(const wxSockAddress& addr, bool WXUNUSED(wait))
         return false;
     }
 
-    if ( !m_username )
+    if ( m_username.empty() )
     {
         m_lastError = wxPROTO_CONNERR;
         return false;
@@ -119,7 +119,7 @@ bool wxFTP::Connect(const wxSockAddress& addr, bool WXUNUSED(wait))
     }
 
     wxString command;
-    command.Printf(wxT("USER %s"), m_username.c_str());
+    command.Printf(wxT("USER %s"), m_username);
     char rc = SendCommand(command);
     if ( rc == '2' )
     {
@@ -135,7 +135,7 @@ bool wxFTP::Connect(const wxSockAddress& addr, bool WXUNUSED(wait))
         return false;
     }
 
-    command.Printf(wxT("PASS %s"), m_password.c_str());
+    command.Printf(wxT("PASS %s"), m_password);
     if ( !CheckCommand(command, '2') )
     {
         m_lastError = wxPROTO_CONNERR;
@@ -316,13 +316,13 @@ char wxFTP::GetResult()
         else // line has at least 4 chars
         {
             // this is the char which tells us what we're dealing with
-            wxChar chMarker = line.GetChar(LEN_CODE);
+            const wxUniChar chMarker = line.GetChar(LEN_CODE);
 
             if ( firstLine )
             {
                 code = wxString(line, LEN_CODE);
 
-                switch ( chMarker )
+                switch ( chMarker.GetValue() )
                 {
                     case wxT(' '):
                         endOfReply = true;
@@ -353,7 +353,7 @@ char wxFTP::GetResult()
     if ( badReply )
     {
         wxLogDebug(wxT("Broken FTP server: '%s' is not a valid reply."),
-                   m_lastResult.c_str());
+                   m_lastResult);
 
         m_lastError = wxPROTO_PROTERR;
 
@@ -419,7 +419,7 @@ bool wxFTP::DoSimpleCommand(const wxChar *command, const wxString& arg)
 
     if ( !CheckCommand(fullcmd, '2') )
     {
-        wxLogDebug(wxT("FTP command '%s' failed."), fullcmd.c_str());
+        wxLogDebug(wxT("FTP command '%s' failed."), fullcmd);
         m_lastError = wxPROTO_NETERR;
 
         return false;
@@ -541,7 +541,7 @@ wxSocketBase *wxFTP::GetPort()
     if ( !socket )
     {
         m_bEncounteredError = true;
-        return NULL;
+        return nullptr;
     }
 
     // Now set the time for the new socket to the default or user selected
@@ -591,7 +591,7 @@ wxSocketBase *wxFTP::GetActivePort()
         // We use IsOk() here to see if everything is ok
         m_lastError = wxPROTO_PROTERR;
         delete sockSrv;
-        return NULL;
+        return nullptr;
     }
 
     //gets the new address, actually it is just the port number
@@ -606,7 +606,7 @@ wxSocketBase *wxFTP::GetActivePort()
         m_lastError = wxPROTO_PROTERR;
         delete sockSrv;
         wxLogError(_("The FTP server doesn't support the PORT command."));
-        return NULL;
+        return nullptr;
     }
 
     m_lastError = wxPROTO_NOERR;
@@ -620,7 +620,7 @@ wxSocketBase *wxFTP::GetPassivePort()
     {
         m_lastError = wxPROTO_PROTERR;
         wxLogError(_("The FTP server doesn't support passive mode."));
-        return NULL;
+        return nullptr;
     }
 
     size_t addrStart = m_lastResult.find(wxT('('));
@@ -631,23 +631,47 @@ wxSocketBase *wxFTP::GetPassivePort()
     if ( addrEnd == wxString::npos )
     {
         m_lastError = wxPROTO_PROTERR;
-        return NULL;
+        return nullptr;
     }
 
-    // get the port number and address
+    // get the port number and address (note that we ignore the address and use
+    // the one we are connected to instead)
     int a[6];
     wxString straddr(m_lastResult, addrStart + 1, addrEnd - (addrStart + 1));
-    wxSscanf(straddr, wxT("%d,%d,%d,%d,%d,%d"),
-             &a[2],&a[3],&a[4],&a[5],&a[0],&a[1]);
+    if ( wxSscanf(straddr, wxT("%d,%d,%d,%d,%d,%d"),
+                  &a[2],&a[3],&a[4],&a[5],&a[0],&a[1]) != 6 )
+    {
+        m_lastError = wxPROTO_PROTERR;
+        return nullptr;
+    }
 
-    wxUint32 hostaddr = (wxUint16)a[2] << 24 |
-                        (wxUint16)a[3] << 16 |
-                        (wxUint16)a[4] << 8 |
-                        a[5];
-    wxUint16 port = (wxUint16)(a[0] << 8 | a[1]);
+    // All values must be bytes, check this even for the address ones which we
+    // don't use, as getting anything else indicates a broken server.
+    for ( int n : a )
+    {
+        if ( n < 0 || n > 255 )
+        {
+            m_lastError = wxPROTO_PROTERR;
+            return nullptr;
+        }
+    }
 
+    const wxUint16 port = (wxUint16)(a[0] << 8 | a[1]);
+    if ( !port )
+    {
+        m_lastError = wxPROTO_PROTERR;
+        return nullptr;
+    }
+
+    // Only use the port from the reply and ignore the address in it: trusting
+    // it would allow the server to make us connect to an arbitrary host, so
+    // always connect to the same server we use for the control connection.
     wxIPV4address addr;
-    addr.Hostname(hostaddr);
+    if ( !GetPeer(addr) )
+    {
+        m_lastError = wxPROTO_NETERR;
+        return nullptr;
+    }
     addr.Service(port);
 
     // If we're used from a worker thread or can't dispatch events even though
@@ -659,7 +683,7 @@ wxSocketBase *wxFTP::GetPassivePort()
     {
         m_lastError = wxPROTO_CONNERR;
         delete client;
-        return NULL;
+        return nullptr;
     }
 
     client->Notify(false);
@@ -762,7 +786,7 @@ wxInputStream *wxFTP::GetInputStream(const wxString& path)
     if ( ( m_currentTransfermode == NONE ) && !SetTransferMode(BINARY) )
     {
         m_lastError = wxPROTO_CONNERR;
-        return NULL;
+        return nullptr;
     }
 
     wxSocketBase *sock = GetPort();
@@ -770,7 +794,7 @@ wxInputStream *wxFTP::GetInputStream(const wxString& path)
     if ( !sock )
     {
         m_lastError = wxPROTO_NETERR;
-        return NULL;
+        return nullptr;
     }
 
     wxString tmp_str = wxT("RETR ") + wxURI::Unescape(path);
@@ -778,14 +802,14 @@ wxInputStream *wxFTP::GetInputStream(const wxString& path)
     {
         delete sock;
 
-        return NULL;
+        return nullptr;
     }
 
     sock = AcceptIfActive(sock);
     if ( !sock )
     {
         m_lastError = wxPROTO_CONNERR;
-        return NULL;
+        return nullptr;
     }
 
     m_streaming = true;
@@ -801,7 +825,7 @@ wxOutputStream *wxFTP::GetOutputStream(const wxString& path)
     if ( ( m_currentTransfermode == NONE ) && !SetTransferMode(BINARY) )
     {
         m_lastError = wxPROTO_CONNERR;
-        return NULL;
+        return nullptr;
     }
 
     wxSocketBase *sock = GetPort();
@@ -811,7 +835,7 @@ wxOutputStream *wxFTP::GetOutputStream(const wxString& path)
     {
         delete sock;
 
-        return NULL;
+        return nullptr;
     }
 
     sock = AcceptIfActive(sock);
@@ -933,7 +957,7 @@ int wxFTP::GetFileSize(const wxString& fileName)
             // 213 is File Status (STD9)
             // "SIZE" is not described anywhere..? It works on most servers
             int statuscode;
-            if ( wxSscanf(GetLastResult().c_str(), wxT("%i %i"),
+            if ( wxSscanf(GetLastResult(), wxT("%i %i"),
                           &statuscode, &filesize) == 2 )
             {
                 // We've gotten a good reply.
@@ -999,7 +1023,7 @@ int wxFTP::GetFileSize(const wxString& fileName)
                         if ( fileList[i].Mid(0, 1) == wxT("-") )
                         {
 
-                            if ( wxSscanf(fileList[i].c_str(),
+                            if ( wxSscanf(fileList[i],
                                           wxT("%*s %*s %*s %*s %i %*s %*s %*s %*s"),
                                           &filesize) != 9 )
                             {
@@ -1009,7 +1033,7 @@ int wxFTP::GetFileSize(const wxString& fileName)
                         }
                         else // Windows-style response (?)
                         {
-                            if ( wxSscanf(fileList[i].c_str(),
+                            if ( wxSscanf(fileList[i],
                                           wxT("%*s %*s %i %*s"),
                                           &filesize) != 4 )
                             {

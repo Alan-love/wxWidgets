@@ -78,6 +78,15 @@ wxUString &wxUString::assignFromUTF8( const char *str )
         size_type len = tableUtf8Lengths[c];
         if (!len)
            return assign( wxUString() );  // don't try to convert invalid UTF-8
+
+        // a multibyte sequence truncated by the terminating NUL must not make
+        // us skip past the end of the string
+        for ( size_type i = 1; i < len; i++ )
+        {
+            if ( !p[i] )
+                return assign( wxUString() );
+        }
+
         ucs4_len++;
         p += len;
     }
@@ -429,7 +438,7 @@ wxScopedCharBuffer wxUString::utf8_str() const
             out[0] = 0xC0 | code;
             out += 2;
         }
-        else if ( code < 0xFFFF )
+        else if ( code <= 0xFFFF )
         {
             out[2] = 0x80 | (code & 0x3F);  code >>= 6;
             out[1] = 0x80 | (code & 0x3F);  code >>= 6;

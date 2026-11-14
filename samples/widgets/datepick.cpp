@@ -42,8 +42,6 @@
 
 #include "widgets.h"
 
-#include "icons/datepick.xpm"
-
 // ----------------------------------------------------------------------------
 // constants
 // ----------------------------------------------------------------------------
@@ -65,13 +63,13 @@ enum
 class DatePickerWidgetsPage : public WidgetsPage
 {
 public:
-    DatePickerWidgetsPage(WidgetsBookCtrl *book, wxImageList *imaglist);
+    DatePickerWidgetsPage(WidgetsBookCtrl *book, wxVector<wxBitmapBundle>& imaglist);
 
-    virtual wxWindow *GetWidget() const wxOVERRIDE { return m_datePicker; }
-    virtual void RecreateWidget() wxOVERRIDE { CreateDatePicker(); }
+    virtual wxWindow *GetWidget() const override { return m_datePicker; }
+    virtual void RecreateWidget() override { CreateDatePicker(); }
 
     // lazy creation of the content
-    virtual void CreateContent() wxOVERRIDE;
+    virtual void CreateContent() override;
 
 protected:
     // event handlers
@@ -140,8 +138,8 @@ IMPLEMENT_WIDGETS_PAGE(DatePickerWidgetsPage, "DatePicker",
                        );
 
 DatePickerWidgetsPage::DatePickerWidgetsPage(WidgetsBookCtrl *book,
-                                         wxImageList *imaglist)
-                      :WidgetsPage(book, imaglist, datepick_xpm)
+                                         wxVector<wxBitmapBundle>& imaglist)
+                      :WidgetsPage(book, imaglist, WidgetsIcon::DatePicker)
 {
 }
 
@@ -159,9 +157,11 @@ void DatePickerWidgetsPage::CreateContent()
                                  1, wxRA_SPECIFY_COLS);
     sizerLeft->Add(m_radioKind, wxSizerFlags().Expand().Border());
 
-    wxSizer* const sizerStyle = new wxStaticBoxSizer(wxVERTICAL, this, "&Style");
-    m_chkStyleCentury = CreateCheckBoxAndAddToSizer(sizerStyle, "Show &century");
-    m_chkStyleAllowNone = CreateCheckBoxAndAddToSizer(sizerStyle, "Allow &no value");
+    wxStaticBoxSizer* const sizerStyle = new wxStaticBoxSizer(wxVERTICAL, this, "&Style");
+    wxStaticBox* const sizerStyleBox = sizerStyle->GetStaticBox();
+
+    m_chkStyleCentury = CreateCheckBoxAndAddToSizer(sizerStyle, "Show &century", wxID_ANY, sizerStyleBox);
+    m_chkStyleAllowNone = CreateCheckBoxAndAddToSizer(sizerStyle, "Allow &no value", wxID_ANY, sizerStyleBox);
 
     sizerLeft->Add(sizerStyle, wxSizerFlags().Expand().Border());
 
@@ -180,9 +180,9 @@ void DatePickerWidgetsPage::CreateContent()
                      ),
                      wxSizerFlags().Expand().Border());
 
-    m_textCur->SetMinSize(wxSize(GetTextExtent("  9999-99-99  ").x, -1));
+    m_textCur->SetMinSize(m_textCur->GetSizeFromText("9999-99-99"));
 
-    sizerMiddle->AddSpacer(10);
+    sizerMiddle->AddSpacer(FromDIP(10));
 
     sizerMiddle->Add(CreateSizerWithTextAndLabel
                      (
@@ -201,7 +201,7 @@ void DatePickerWidgetsPage::CreateContent()
     sizerMiddle->Add(new wxButton(this, DatePickerPage_SetRange, "Set &range"),
                      wxSizerFlags().Centre().Border());
 
-    sizerMiddle->AddSpacer(10);
+    sizerMiddle->AddSpacer(FromDIP(10));
 
     sizerMiddle->Add(CreateSizerWithTextAndLabel
                      (
@@ -221,15 +221,15 @@ void DatePickerWidgetsPage::CreateContent()
 
     m_datePicker = new wxDatePickerCtrl(this, DatePickerPage_Picker);
 
-    sizerRight->Add(0, 0, 1, wxCENTRE);
-    sizerRight->Add(m_datePicker, 1, wxCENTRE);
-    sizerRight->Add(0, 0, 1, wxCENTRE);
+    sizerRight->AddStretchSpacer();
+    sizerRight->Add(m_datePicker, wxSizerFlags(1).Centre());
+    sizerRight->AddStretchSpacer();
     m_sizerDatePicker = sizerRight; // save it to modify it later
 
     // the 3 panes panes compose the window
-    sizerTop->Add(sizerLeft, 0, (wxALL & ~wxLEFT), 10);
-    sizerTop->Add(sizerMiddle, 0, (wxTOP | wxBOTTOM), 10);
-    sizerTop->Add(sizerRight, 1, wxGROW | (wxALL & ~wxRIGHT), 10);
+    sizerTop->Add(sizerLeft, wxSizerFlags().DoubleBorder(wxALL & ~wxLEFT));
+    sizerTop->Add(sizerMiddle, wxSizerFlags().DoubleBorder(wxTOP | wxBOTTOM));
+    sizerTop->Add(sizerRight, wxSizerFlags(1).Expand().DoubleBorder(wxALL & ~wxRIGHT));
 
     // final initializations
     m_chkStyleCentury->SetValue(true);
@@ -283,9 +283,11 @@ void DatePickerWidgetsPage::CreateDatePicker()
                                         wxDefaultPosition, wxDefaultSize,
                                         style);
 
-    m_sizerDatePicker->Add(0, 0, 1, wxCENTRE);
-    m_sizerDatePicker->Add(m_datePicker, 1, wxCENTRE);
-    m_sizerDatePicker->Add(0, 0, 1, wxCENTRE);
+    NotifyWidgetRecreation(m_datePicker);
+
+    m_sizerDatePicker->AddStretchSpacer();
+    m_sizerDatePicker->Add(m_datePicker, wxSizerFlags(1).Centre());
+    m_sizerDatePicker->AddStretchSpacer();
     m_sizerDatePicker->Layout();
 }
 

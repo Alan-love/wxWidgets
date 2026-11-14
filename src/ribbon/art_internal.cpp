@@ -2,14 +2,12 @@
 // Name:        src/ribbon/art_internal.cpp
 // Purpose:     Helper functions & classes used by ribbon art providers
 // Author:      Peter Cawley
-// Modified by:
 // Created:     2009-08-04
 // Copyright:   (C) Peter Cawley
 // Licence:     wxWindows licence
 ///////////////////////////////////////////////////////////////////////////////
 
 #include "wx/wxprec.h"
-
 
 #if wxUSE_RIBBON
 
@@ -105,6 +103,8 @@ wxRibbonHSLColour wxRibbonShiftLuminance(wxRibbonHSLColour colour,
 {
     if(amount <= 1.0f)
         return colour.Darker(colour.luminance * (1.0f - amount));
+    else if (wxSystemSettings::GetAppearance().IsDark())
+        return colour.Darker(colour.luminance * (amount - 1.0f));
     else
         return colour.Lighter((1.0f - colour.luminance) * (amount - 1.0f));
 }
@@ -114,6 +114,65 @@ wxBitmap wxRibbonLoadPixmap(const char* const* bits, wxColour fore)
     wxImage xpm = wxBitmap(bits).ConvertToImage();
     xpm.Replace(255, 0, 255, fore.Red(), fore.Green(), fore.Blue());
     return wxBitmap(xpm);
+}
+
+void wxRibbonDrawKeyTip(wxDC& dc,
+                        wxWindow* wnd,
+                        const wxRect& rect,
+                        const wxString& keytip,
+                        const wxFont& font)
+{
+    if ( keytip.empty() )
+        return;
+
+    dc.SetFont(font);
+    wxSize text_size = dc.GetTextExtent(keytip);
+
+    const int padding_x = 3;
+    const int padding_y = 2;
+    wxSize badge_size(text_size.GetWidth() + 2 * padding_x,
+                       text_size.GetHeight() + 2 * padding_y);
+
+    // Anchor inside the rect's bottom center if it fits.
+    // Otherwise (e.g., a panel's small ext button) drop the
+    // badge below the rect instead.
+    wxPoint pos;
+    if ( badge_size.GetHeight() <= rect.GetHeight() )
+    {
+        pos.x = rect.GetX() + (rect.GetWidth() - badge_size.GetWidth()) / 2;
+        pos.y = rect.GetBottom() - badge_size.GetHeight();
+    }
+    else
+    {
+        pos.x = rect.GetX() + (rect.GetWidth() - badge_size.GetWidth()) / 2;
+        pos.y = rect.GetBottom() + 2;
+    }
+
+    if ( wnd != nullptr )
+    {
+        wxSize client = wnd->GetClientSize();
+        pos.x = wxMax(0, wxMin(pos.x, client.GetWidth() - badge_size.GetWidth()));
+        pos.y = wxMax(0, wxMin(pos.y, client.GetHeight() - badge_size.GetHeight()));
+    }
+
+    wxRect badge_rect(pos, badge_size);
+
+    // These colours match the ones used by other established ribbon
+    // implementations, and no system colour would give the same appearance.
+    const wxColour badge_bg_light(97, 97, 97);
+    const wxColour badge_bg_dark(255, 214, 51);
+
+    const wxColour badge_bg =
+        wxSystemSettings::SelectLightDark(badge_bg_light, badge_bg_dark);
+    const wxColour badge_fg =
+        wxSystemSettings::SelectLightDark(*wxWHITE, *wxBLACK);
+
+    dc.SetPen(wxPen(badge_bg));
+    dc.SetBrush(wxBrush(badge_bg));
+    dc.DrawRectangle(badge_rect);
+
+    dc.SetTextForeground(badge_fg);
+    dc.DrawText(keytip, badge_rect.GetX() + padding_x, badge_rect.GetY() + padding_y);
 }
 
 wxRibbonHSLColour::wxRibbonHSLColour(const wxColour& col)
@@ -216,20 +275,14 @@ wxColour wxRibbonHSLColour::ToRGB() const
             blue = tmp1;
     }
     return wxColour(
-        (unsigned char)(red * 255.0f),
-        (unsigned char)(green * 255.0f),
-        (unsigned char)(blue * 255.0f));
+        static_cast<unsigned char>(red * 255.0f),
+        static_cast<unsigned char>(green * 255.0f),
+        static_cast<unsigned char>(blue * 255.0f));
 }
 
 wxRibbonHSLColour wxRibbonHSLColour::Darker(float delta) const
 {
     return Lighter(-delta);
-}
-
-wxRibbonHSLColour& wxRibbonHSLColour::MakeDarker(float delta)
-{
-    luminance -= delta;
-    return *this;
 }
 
 wxRibbonHSLColour wxRibbonHSLColour::Lighter(float delta) const

@@ -2,7 +2,6 @@
 // Name:        src/generic/gridctrl.cpp
 // Purpose:     wxGrid controls
 // Author:      Paul Gammans, Roger Gammans
-// Modified by:
 // Created:     11/04/2001
 // Copyright:   (c) The Computer Surgery (paul@compsurg.co.uk)
 // Licence:     wxWindows licence
@@ -18,15 +17,16 @@
 
 #ifndef WX_PRECOMP
     #include "wx/textctrl.h"
-    #include "wx/dc.h"
     #include "wx/combobox.h"
     #include "wx/settings.h"
     #include "wx/log.h"
     #include "wx/checkbox.h"
 #endif // WX_PRECOMP
 
+#include "wx/numformatter.h"
 #include "wx/tokenzr.h"
 #include "wx/renderer.h"
+#include "wx/uilocale.h"
 
 #include "wx/generic/private/grid.h"
 #include "wx/private/window.h"
@@ -47,7 +47,7 @@ void wxGridCellRenderer::Draw(wxGrid& grid,
     wxColour clr;
     if ( grid.IsThisEnabled() )
     {
-        if ( isSelected )
+        if ( !grid.UsesOverlaySelection() && isSelected )
         {
             if ( grid.HasFocus() )
                 clr = grid.GetSelectionBackground();
@@ -69,6 +69,42 @@ void wxGridCellRenderer::Draw(wxGrid& grid,
     dc.DrawRectangle(rect);
 }
 
+void wxGridCellRenderer::SetTextColoursAndFont(const wxGrid& grid,
+                                               const wxGridCellAttr& attr,
+                                               wxDC& dc,
+                                               bool isSelected)
+{
+    dc.SetBackgroundMode( wxBRUSHSTYLE_TRANSPARENT );
+
+    // TODO some special colours for attr.IsReadOnly() case?
+
+    // different coloured text when the grid is disabled
+    if ( grid.IsThisEnabled() )
+    {
+        if ( !grid.UsesOverlaySelection() && isSelected )
+        {
+            wxColour clr;
+            if ( grid.HasFocus() )
+                clr = grid.GetSelectionBackground();
+            else
+                clr = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNSHADOW);
+            dc.SetTextBackground( clr );
+            dc.SetTextForeground( grid.GetSelectionForeground() );
+        }
+        else
+        {
+            dc.SetTextBackground( attr.GetBackgroundColour() );
+            dc.SetTextForeground( attr.GetTextColour() );
+        }
+    }
+    else
+    {
+        dc.SetTextBackground(wxSystemSettings::GetColour(wxSYS_COLOUR_BTNFACE));
+        dc.SetTextForeground(wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
+    }
+
+    dc.SetFont( attr.GetFont() );
+}
 
 // ----------------------------------------------------------------------------
 // wxGridCellDateTimeRenderer
@@ -120,21 +156,17 @@ using namespace wxGridPrivate;
 // Enables a grid cell to display a formatted date
 
 wxGridCellDateRenderer::wxGridCellDateRenderer(const wxString& outformat)
+    : wxGridCellStringRenderer()
 {
     if ( outformat.empty() )
     {
-        m_oformat = "%x"; // Localized date representation.
+        m_oformat = wxGetUIDateFormat();
     }
     else
     {
         m_oformat = outformat;
     }
     m_tz = wxDateTime::Local;
-}
-
-wxGridCellRenderer *wxGridCellDateRenderer::Clone() const
-{
-    return new wxGridCellDateRenderer(*this);
 }
 
 wxString wxGridCellDateRenderer::GetString(const wxGrid& grid, int row, int col)
@@ -218,11 +250,6 @@ wxGridCellDateTimeRenderer::wxGridCellDateTimeRenderer(const wxString& outformat
 {
 }
 
-wxGridCellRenderer *wxGridCellDateTimeRenderer::Clone() const
-{
-    return new wxGridCellDateTimeRenderer(*this);
-}
-
 void
 wxGridCellDateTimeRenderer::GetDateParseParams(DateParseParams& params) const
 {
@@ -235,15 +262,28 @@ wxGridCellDateTimeRenderer::GetDateParseParams(DateParseParams& params) const
 // wxGridCellChoiceRenderer
 // ----------------------------------------------------------------------------
 
+wxGridCellChoiceRenderer::wxGridCellChoiceRenderer(const wxString& choices)
+    : wxGridCellStringRenderer()
+{
+    if (!choices.empty())
+        SetParameters(choices);
+}
+
+wxGridCellChoiceRenderer::wxGridCellChoiceRenderer(const wxGridCellChoiceRenderer& other)
+    : wxGridCellStringRenderer(other),
+      m_choices(other.m_choices)
+{
+}
+
 wxSize wxGridCellChoiceRenderer::GetMaxBestSize(wxGrid& WXUNUSED(grid),
                                                 wxGridCellAttr& attr,
                                                 wxDC& dc)
 {
     wxSize size;
 
-    for ( size_t n = 0; n < m_choices.size(); ++n )
+    for ( const auto& choice : m_choices )
     {
-        size.IncTo(DoGetBestSize(attr, dc, m_choices[n]));
+        size.IncTo(DoGetBestSize(attr, dc, choice));
     }
 
     return size;
@@ -270,19 +310,6 @@ void wxGridCellChoiceRenderer::SetParameters(const wxString& params)
 // eg data in cell is 0,1,2 ... n the cell could be rendered as "John","Fred"..."Bob"
 
 
-wxGridCellEnumRenderer::wxGridCellEnumRenderer(const wxString& choices)
-{
-    if (!choices.empty())
-        SetParameters(choices);
-}
-
-wxGridCellRenderer *wxGridCellEnumRenderer::Clone() const
-{
-    wxGridCellEnumRenderer *renderer = new wxGridCellEnumRenderer;
-    renderer->m_choices = m_choices;
-    return renderer;
-}
-
 wxString wxGridCellEnumRenderer::GetString(const wxGrid& grid, int row, int col)
 {
     wxGridTableBase *table = grid.GetTable();
@@ -290,7 +317,7 @@ wxString wxGridCellEnumRenderer::GetString(const wxGrid& grid, int row, int col)
     if ( table->CanGetValueAs(row, col, wxGRID_VALUE_NUMBER) )
     {
         int choiceno = table->GetValueAsLong(row, col);
-        text.Printf(wxT("%s"), m_choices[ choiceno ].c_str() );
+        text.Printf(wxT("%s"), m_choices[ choiceno ] );
     }
     else
     {
@@ -363,7 +390,7 @@ wxGridCellAutoWrapStringRenderer::Draw(wxGrid& grid,
 
 wxArrayString
 wxGridCellAutoWrapStringRenderer::GetTextLines(wxGrid& grid,
-                                               wxDC& dc,
+                                               wxReadOnlyDC& dc,
                                                const wxGridCellAttr& attr,
                                                const wxRect& rect,
                                                int row, int col)
@@ -381,12 +408,8 @@ wxGridCellAutoWrapStringRenderer::GetTextLines(wxGrid& grid,
         return logicalLines;
 
     wxArrayString physicalLines;
-    for ( wxArrayString::const_iterator it = logicalLines.begin();
-          it != logicalLines.end();
-          ++it )
+    for ( const auto& line : logicalLines )
     {
-        const wxString& line = *it;
-
         if ( dc.GetTextExtent(line).x > maxWidth )
         {
             // Line does not fit, break it up.
@@ -402,7 +425,7 @@ wxGridCellAutoWrapStringRenderer::GetTextLines(wxGrid& grid,
 }
 
 void
-wxGridCellAutoWrapStringRenderer::BreakLine(wxDC& dc,
+wxGridCellAutoWrapStringRenderer::BreakLine(wxReadOnlyDC& dc,
                                             const wxString& logicalLine,
                                             wxCoord maxWidth,
                                             wxArrayString& lines)
@@ -455,7 +478,7 @@ wxGridCellAutoWrapStringRenderer::BreakLine(wxDC& dc,
 
 
 wxCoord
-wxGridCellAutoWrapStringRenderer::BreakWord(wxDC& dc,
+wxGridCellAutoWrapStringRenderer::BreakWord(wxReadOnlyDC& dc,
                                             const wxString& word,
                                             wxCoord maxWidth,
                                             wxArrayString& lines,
@@ -510,6 +533,8 @@ wxGridCellAutoWrapStringRenderer::GetBestSize(wxGrid& grid,
                                               wxDC& dc,
                                               int row, int col)
 {
+    dc.SetFont(attr.GetFont());
+
     // We have to make a choice here and fix either width or height because we
     // don't have any naturally best size. This choice is mostly arbitrary, but
     // we need to be consistent about it, otherwise wxGrid auto-sizing code
@@ -529,6 +554,8 @@ wxGridCellAutoWrapStringRenderer::GetBestHeight(wxGrid& grid,
                                                 int row, int col,
                                                 int width)
 {
+    dc.SetFont(attr.GetFont());
+
     const int lineHeight = dc.GetCharHeight();
 
     // Use as many lines as we need for this width and add a small border to
@@ -544,6 +571,8 @@ wxGridCellAutoWrapStringRenderer::GetBestWidth(wxGrid& grid,
                                                int row, int col,
                                                int height)
 {
+    dc.SetFont(attr.GetFont());
+
     const int lineHeight = dc.GetCharHeight();
 
     // Base the maximal number of lines either on how many fit or how many
@@ -573,45 +602,8 @@ wxGridCellAutoWrapStringRenderer::GetBestWidth(wxGrid& grid,
 // wxGridCellStringRenderer
 // ----------------------------------------------------------------------------
 
-void wxGridCellStringRenderer::SetTextColoursAndFont(const wxGrid& grid,
-                                                     const wxGridCellAttr& attr,
-                                                     wxDC& dc,
-                                                     bool isSelected)
-{
-    dc.SetBackgroundMode( wxBRUSHSTYLE_TRANSPARENT );
-
-    // TODO some special colours for attr.IsReadOnly() case?
-
-    // different coloured text when the grid is disabled
-    if ( grid.IsThisEnabled() )
-    {
-        if ( isSelected )
-        {
-            wxColour clr;
-            if ( grid.HasFocus() )
-                clr = grid.GetSelectionBackground();
-            else
-                clr = wxSystemSettings::GetColour(wxSYS_COLOUR_BTNSHADOW);
-            dc.SetTextBackground( clr );
-            dc.SetTextForeground( grid.GetSelectionForeground() );
-        }
-        else
-        {
-            dc.SetTextBackground( attr.GetBackgroundColour() );
-            dc.SetTextForeground( attr.GetTextColour() );
-        }
-    }
-    else
-    {
-        dc.SetTextBackground(wxSystemSettings::GetColour(wxSYS_COLOUR_BTNFACE));
-        dc.SetTextForeground(wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
-    }
-
-    dc.SetFont( attr.GetFont() );
-}
-
 wxSize wxGridCellStringRenderer::DoGetBestSize(const wxGridCellAttr& attr,
-                                               wxDC& dc,
+                                               wxReadOnlyDC& dc,
                                                const wxString& text)
 {
     dc.SetFont(attr.GetFont());
@@ -808,21 +800,11 @@ void wxGridCellNumberRenderer::SetParameters(const wxString& params)
 wxGridCellFloatRenderer::wxGridCellFloatRenderer(int width,
                                                  int precision,
                                                  int format)
+    : wxGridCellStringRenderer()
 {
     SetWidth(width);
     SetPrecision(precision);
     SetFormat(format);
-}
-
-wxGridCellRenderer *wxGridCellFloatRenderer::Clone() const
-{
-    wxGridCellFloatRenderer *renderer = new wxGridCellFloatRenderer;
-    renderer->m_width = m_width;
-    renderer->m_precision = m_precision;
-    renderer->m_style = m_style;
-    renderer->m_format = m_format;
-
-    return renderer;
 }
 
 wxString wxGridCellFloatRenderer::GetString(const wxGrid& grid, int row, int col)
@@ -840,12 +822,12 @@ wxString wxGridCellFloatRenderer::GetString(const wxGrid& grid, int row, int col
     else
     {
         text = table->GetValue(row, col);
-        hasDouble = text.ToDouble(&val);
+        hasDouble = wxNumberFormatter::FromString(text, &val);
     }
 
     if ( hasDouble )
     {
-        if ( !m_format )
+        if ( m_format.empty() )
         {
             if ( m_width == -1 )
             {
@@ -878,8 +860,7 @@ wxString wxGridCellFloatRenderer::GetString(const wxGrid& grid, int row, int col
                 m_format += wxT('f');
         }
 
-        text.Printf(m_format, val);
-
+        text = wxNumberFormatter::Format(m_format, val);
     }
     //else: text already contains the string
 
@@ -915,7 +896,7 @@ wxSize wxGridCellFloatRenderer::GetBestSize(wxGrid& grid,
 
 void wxGridCellFloatRenderer::SetParameters(const wxString& params)
 {
-    if ( !params )
+    if ( params.empty() )
     {
         // reset to defaults
         SetWidth(-1);
@@ -935,7 +916,7 @@ void wxGridCellFloatRenderer::SetParameters(const wxString& params)
             }
             else
             {
-                wxLogDebug(wxT("Invalid wxGridCellFloatRenderer width parameter string '%s ignored"), params.c_str());
+                wxLogDebug(wxT("Invalid wxGridCellFloatRenderer width parameter string '%s ignored"), params);
             }
         }
 
@@ -949,7 +930,7 @@ void wxGridCellFloatRenderer::SetParameters(const wxString& params)
             }
             else
             {
-                wxLogDebug(wxT("Invalid wxGridCellFloatRenderer precision parameter string '%s ignored"), params.c_str());
+                wxLogDebug(wxT("Invalid wxGridCellFloatRenderer precision parameter string '%s ignored"), params);
             }
         }
 

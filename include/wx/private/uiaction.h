@@ -17,13 +17,18 @@
 class wxUIActionSimulatorImpl
 {
 public:
-    wxUIActionSimulatorImpl() { }
-    virtual ~wxUIActionSimulatorImpl() { }
+    wxUIActionSimulatorImpl() = default;
+    virtual ~wxUIActionSimulatorImpl() = default;
 
     // Low level mouse methods which must be implemented in the derived class.
     virtual bool MouseMove(long x, long y) = 0;
     virtual bool MouseDown(int button = wxMOUSE_BTN_LEFT) = 0;
     virtual bool MouseUp(int button = wxMOUSE_BTN_LEFT) = 0;
+
+    // Rotate the wheel by the given number of notches, using wx convention
+    // for the sign, i.e. positive values mean up or right, depending on the
+    // axis. This function is only called with non-zero rotation.
+    virtual bool MouseWheel(int rotation, wxMouseWheelAxis axis) = 0;
 
     // Higher level mouse methods which have default implementation in the base
     // class but can be overridden if necessary.

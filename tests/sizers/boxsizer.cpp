@@ -21,7 +21,9 @@
 
 #include "asserthelper.h"
 
-#include "wx/scopedptr.h"
+#include "wx/private/sizer.h"
+
+#include <memory>
 
 // ----------------------------------------------------------------------------
 // test fixture
@@ -38,13 +40,9 @@ public:
         m_win->SetSizer(m_sizer);
     }
 
-    ~BoxSizerTestCase()
-    {
-        delete m_win;
-    }
 
 protected:
-    wxWindow* const m_win;
+    const std::unique_ptr<wxWindow> m_win;
     wxSizer* const m_sizer;
 };
 
@@ -58,7 +56,8 @@ TEST_CASE_METHOD(BoxSizerTestCase, "BoxSizer::Size1", "[sizer]")
     const wxSize sizeChild = sizeTotal / 2;
 
     wxWindow * const
-        child = new wxWindow(m_win, wxID_ANY, wxDefaultPosition, sizeChild);
+        child = new wxWindow(m_win.get(), wxID_ANY,
+                             wxDefaultPosition, sizeChild);
     m_sizer->Add(child);
     m_win->Layout();
     CHECK(child->GetSize() == sizeChild);
@@ -152,9 +151,9 @@ TEST_CASE_METHOD(BoxSizerTestCase, "BoxSizer::Size3", "[sizer]")
     wxGCC_WARNING_RESTORE(missing-field-initializers)
 
     wxWindow *child[3];
-    child[0] = new wxWindow(m_win, wxID_ANY);
-    child[1] = new wxWindow(m_win, wxID_ANY);
-    child[2] = new wxWindow(m_win, wxID_ANY);
+    child[0] = new wxWindow(m_win.get(), wxID_ANY);
+    child[1] = new wxWindow(m_win.get(), wxID_ANY);
+    child[2] = new wxWindow(m_win.get(), wxID_ANY);
 
     for ( unsigned i = 0; i < WXSIZEOF(layoutTestData); i++ )
     {
@@ -247,7 +246,7 @@ TEST_CASE_METHOD(BoxSizerTestCase, "BoxSizer::CalcMin", "[sizer]")
     unsigned n;
     wxWindow *child[NUM_TEST_ITEM];
     for ( n = 0; n < NUM_TEST_ITEM; n++ )
-        child[n] = new wxWindow(m_win, wxID_ANY);
+        child[n] = new wxWindow(m_win.get(), wxID_ANY);
 
     for ( unsigned i = 0; i < WXSIZEOF(calcMinTestData); i++ )
     {
@@ -273,7 +272,7 @@ TEST_CASE_METHOD(BoxSizerTestCase, "BoxSizer::CalcMin", "[sizer]")
 
 TEST_CASE_METHOD(BoxSizerTestCase, "BoxSizer::SetMinSize", "[sizer]")
 {
-    wxWindow* const child = new wxWindow(m_win, wxID_ANY);
+    wxWindow* const child = new wxWindow(m_win.get(), wxID_ANY);
     child->SetInitialSize(wxSize(10, -1));
     m_sizer->Add(child);
 
@@ -294,7 +293,7 @@ TEST_CASE_METHOD(BoxSizerTestCase, "BoxSizer::BestSizeRespectsMaxSize", "[sizer]
     const int maxWidth = 100;
 
     wxSizer* sizer = new wxBoxSizer(wxVERTICAL);
-    wxListBox* listbox = new wxListBox(m_win, wxID_ANY);
+    wxListBox* listbox = new wxListBox(m_win.get(), wxID_ANY);
     listbox->Append("some very very very very very very very very very very very long string");
     listbox->SetMaxSize(wxSize(maxWidth, -1));
     sizer->Add(listbox);
@@ -316,14 +315,14 @@ TEST_CASE_METHOD(BoxSizerTestCase, "BoxSizer::RecalcSizesRespectsMaxSize1", "[si
     wxSizer* sizer1 = new wxBoxSizer(wxVERTICAL);
     m_sizer->Add(sizer1);
 
-    wxListBox* listbox1 = new wxListBox(m_win, wxID_ANY);
+    wxListBox* listbox1 = new wxListBox(m_win.get(), wxID_ANY);
     listbox1->Append("some very very very very very very very very very very very long string");
     sizer1->Add(listbox1);
 
     wxSizer* sizer2 = new wxBoxSizer(wxHORIZONTAL);
     sizer1->Add(sizer2, wxSizerFlags().Expand());
 
-    wxListBox* listbox2 = new wxListBox(m_win, wxID_ANY);
+    wxListBox* listbox2 = new wxListBox(m_win.get(), wxID_ANY);
     listbox2->Append("some string");
     listbox2->SetMaxSize(wxSize(100, -1));
     sizer2->Add(listbox2, wxSizerFlags().Proportion(1));
@@ -343,14 +342,14 @@ TEST_CASE_METHOD(BoxSizerTestCase, "BoxSizer::RecalcSizesRespectsMaxSize2", "[si
     wxSizer* sizer1 = new wxBoxSizer(wxVERTICAL);
     m_sizer->Add(sizer1, wxSizerFlags().Expand());
 
-    wxWindow* child1 = new wxWindow(m_win, wxID_ANY);
+    wxWindow* child1 = new wxWindow(m_win.get(), wxID_ANY);
     sizer1->Add(child1, wxSizerFlags().Proportion(1));
 
-    wxWindow* child2 = new wxWindow(m_win, wxID_ANY);
+    wxWindow* child2 = new wxWindow(m_win.get(), wxID_ANY);
     child2->SetMaxSize(wxSize(-1, 50));
     sizer1->Add(child2, wxSizerFlags().Proportion(1));
 
-    wxWindow* child3 = new wxWindow(m_win, wxID_ANY);
+    wxWindow* child3 = new wxWindow(m_win.get(), wxID_ANY);
     sizer1->Add(child3, wxSizerFlags().Proportion(1));
 
     m_win->Layout();
@@ -366,7 +365,7 @@ TEST_CASE_METHOD(BoxSizerTestCase, "BoxSizer::IncompatibleFlags", "[sizer]")
 #define ASSERT_SIZER_INVALID_FLAGS(f, msg) \
     WX_ASSERT_FAILS_WITH_ASSERT_MESSAGE( \
             "Expected assertion not generated for " msg, \
-            wxScopedPtr<wxSizerItem> item(new wxSizerItem(10, 10, 0, f)); \
+            auto item = make_unique<wxSizerItem>(10, 10, 0, f); \
             sizer->Add(item.get()); \
             item.release() \
         )
@@ -397,7 +396,7 @@ TEST_CASE_METHOD(BoxSizerTestCase, "BoxSizer::IncompatibleFlags", "[sizer]")
     // Combining two vertical alignment flags doesn't make sense.
     ASSERT_SIZER_INCOMPATIBLE_FLAGS(wxALIGN_BOTTOM, wxALIGN_CENTRE_VERTICAL);
 
-    // Combining wxEXPAND with vertical alignment doesn't make sense neither.
+    // Combining wxEXPAND with vertical alignment doesn't make sense either.
     ASSERT_SIZER_INCOMPATIBLE_FLAGS(wxEXPAND, wxALIGN_CENTRE_VERTICAL);
     ASSERT_SIZER_INCOMPATIBLE_FLAGS(wxEXPAND, wxALIGN_BOTTOM);
 
@@ -445,5 +444,112 @@ TEST_CASE_METHOD(BoxSizerTestCase, "BoxSizer::IncompatibleFlags", "[sizer]")
 TEST_CASE_METHOD(BoxSizerTestCase, "BoxSizer::Replace", "[sizer]")
 {
     m_sizer->AddSpacer(1);
-    m_sizer->Replace(0, new wxSizerItem(new wxWindow(m_win, wxID_ANY)));
+    m_sizer->Replace(0, new wxSizerItem(new wxWindow(m_win.get(), wxID_ANY)));
+}
+
+TEST_CASE_METHOD(BoxSizerTestCase, "Sizer::DetachItem", "[sizer]")
+{
+    wxSizerItem *item = nullptr;
+
+    SECTION("Spacer")
+    {
+        item = new wxSizerItem(0, 0);
+    }
+
+    SECTION("Sizer")
+    {
+        item = new wxSizerItem(new wxBoxSizer(wxVERTICAL));
+    }
+
+    SECTION("Window")
+    {
+        item = new wxSizerItem(new wxWindow(m_win.get(), wxID_ANY));
+    }
+
+    m_sizer->Add(item);
+
+    // Test re-insertion
+    auto *detached = m_sizer->DetachItem(0);
+    CHECK( item == detached );
+
+    m_sizer->Insert(0, detached);
+
+    // Test deletion after detach.
+    detached = m_sizer->DetachItem(0);
+    CHECK( item == detached );
+
+    delete detached;
+}
+
+TEST_CASE_METHOD(BoxSizerTestCase, "Sizer::PretendAllItemsAreShown", "[sizer]")
+{
+    auto* const child1 = new wxWindow(m_win.get(), wxID_ANY);
+    child1->SetMinSize(wxSize(10, 10));
+    auto* const child2 = new wxWindow(m_win.get(), wxID_ANY);
+    child2->SetMinSize(wxSize(20, 20));
+    auto* const child3 = new wxWindow(m_win.get(), wxID_ANY);
+    child3->SetMinSize(wxSize(30, 30));
+    auto* const child4 = new wxWindow(m_win.get(), wxID_ANY);
+    child4->SetMinSize(wxSize(40, 40));
+
+    m_sizer->Add(child1);
+    m_sizer->Add(child2);
+
+    // Check that nested sizers are handled too.
+    auto* const subsizer = new wxBoxSizer(wxHORIZONTAL);
+    subsizer->Add(child3);
+    m_sizer->Add(subsizer);
+
+    // And that the items already reserving space continue to do it.
+    m_sizer->Add(child4, wxSizerFlags().ReserveSpaceEvenIfHidden());
+
+    child2->Hide();
+    child3->Hide();
+    child4->Hide();
+
+    CHECK( m_sizer->CalcMin() == wxSize(50, 40) );
+
+    {
+        wxSizerPretendAllItemsAreShown pretend(m_sizer);
+        CHECK( m_sizer->CalcMin() == wxSize(100, 40) );
+    }
+
+    CHECK( m_sizer->CalcMin() == wxSize(50, 40) );
+    CHECK( m_sizer->GetItem(child4)->GetFlag() & wxRESERVE_SPACE_EVEN_IF_HIDDEN );
+}
+
+TEST_CASE("Sizer::CombineFlags", "[sizer]")
+{
+    // This is a compile-time test which simply verifies that we can combine
+    // all the different flags without getting any warnings about doing it --
+    // as would have been the case when using C++20 or later if we didn't use
+    // wxALLOW_COMBINING_ENUMS() for all these enums in wx/defs.h.
+    //
+    // These constants belong to the following enums, respectively:
+    //
+    //         wxALIGN_CENTER         wxAlignment
+    //         wxBORDER_NONE          wxBorder
+    //         wxLEFT                 wxDirection
+    //         wxCENTER               wxGeometryCentre
+    //         wxFIXED_MINSIZE        wxSizerFlagBits
+    //         wxEXPAND               wxStretch
+    //
+    int n = (wxALIGN_CENTER | wxBORDER_NONE)
+          | (wxALIGN_CENTER | wxLEFT)
+          | (wxALIGN_CENTER | wxCENTER)
+          | (wxALIGN_CENTER | wxFIXED_MINSIZE)
+          | (wxALIGN_CENTER | wxEXPAND)
+          | (wxBORDER_NONE | wxLEFT)
+          | (wxBORDER_NONE | wxCENTER)
+          | (wxBORDER_NONE | wxFIXED_MINSIZE)
+          | (wxBORDER_NONE | wxEXPAND)
+          | (wxLEFT | wxCENTER)
+          | (wxLEFT | wxFIXED_MINSIZE)
+          | (wxLEFT | wxEXPAND)
+          | (wxCENTER | wxFIXED_MINSIZE)
+          | (wxCENTER | wxEXPAND)
+          | (wxFIXED_MINSIZE | wxEXPAND)
+          ;
+
+    wxUnusedVar(n);
 }

@@ -2,7 +2,6 @@
 // Name:        about.cpp
 // Purpose:     wxHtml sample: about dialog test
 // Author:      ?
-// Modified by:
 // Created:     ?
 // Copyright:   (c) wxWidgets team
 // Licence:     wxWindows licence
@@ -43,7 +42,7 @@ public:
     // this one is called on application startup and is a good place for the app
     // initialization (doing it here and not in the ctor allows to have an error
     // return: if OnInit() returns false, the application terminates)
-    virtual bool OnInit() wxOVERRIDE;
+    virtual bool OnInit() override;
 };
 
 // Define a new frame type: this is going to be our main frame
@@ -114,7 +113,7 @@ bool MyApp::OnInit()
 
 // frame constructor
 MyFrame::MyFrame(const wxString& title)
-       : wxFrame((wxFrame *)NULL, wxID_ANY, title)
+       : wxFrame(nullptr, wxID_ANY, title)
 {
     SetIcon(wxICON(sample));
 
@@ -152,19 +151,20 @@ void MyFrame::OnAbout(wxCommandEvent& WXUNUSED(event))
     html = new wxHtmlWindow(&dlg, wxID_ANY, wxDefaultPosition, wxSize(380, 160), wxHW_SCROLLBAR_NEVER);
     html -> SetBorders(0);
     html -> LoadPage("data/about.htm");
+    html -> SetHTMLBackgroundImage(wxBitmapBundle::FromSVGFile("data/bg.svg", wxSize(65, 45)));
     html -> SetInitialSize(wxSize(html -> GetInternalRepresentation() -> GetWidth(),
                                   html -> GetInternalRepresentation() -> GetHeight()));
 
-    topsizer -> Add(html, 1, wxALL, 10);
+    topsizer -> Add(html, wxSizerFlags(1).DoubleBorder());
 
 #if wxUSE_STATLINE
-    topsizer -> Add(new wxStaticLine(&dlg, wxID_ANY), 0, wxEXPAND | wxLEFT | wxRIGHT, 10);
+    topsizer -> Add(new wxStaticLine(&dlg, wxID_ANY), wxSizerFlags().Expand().DoubleHorzBorder());
 #endif // wxUSE_STATLINE
 
     wxButton *bu1 = new wxButton(&dlg, wxID_OK, _("OK"));
     bu1 -> SetDefault();
 
-    topsizer -> Add(bu1, 0, wxALL | wxALIGN_RIGHT, 15);
+    topsizer -> Add(bu1, wxSizerFlags().Right().TripleBorder());
 
     dlg.SetSizer(topsizer);
     topsizer -> Fit(&dlg);

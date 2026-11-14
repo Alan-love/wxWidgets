@@ -4,28 +4,49 @@
 // Author:      Steven Lamerton
 // Created:     2010-07-10
 // Copyright:   (c) 2010 Steven Lamerton
+//              (c) 2026 wxWidgets development team
 ///////////////////////////////////////////////////////////////////////////////
 
 #include "testprec.h"
-
 
 #ifndef WX_PRECOMP
     #include "wx/app.h"
     #include "wx/window.h"
     #include "wx/button.h"
+    #include "wx/panel.h"
     #include "wx/sizer.h"
+    #include "wx/stattext.h"
+    #include "wx/textctrl.h"
 #endif // WX_PRECOMP
 
 #include "asserthelper.h"
 #include "testableframe.h"
 #include "testwindow.h"
+#include "waitfor.h"
 
 #include "wx/uiaction.h"
 #include "wx/caret.h"
 #include "wx/cshelp.h"
-#include "wx/scopedptr.h"
-#include "wx/stopwatch.h"
+#include "wx/dcclient.h"
+#include "wx/richtooltip.h"
+#include "wx/timer.h"
 #include "wx/tooltip.h"
+#include "wx/wupdlock.h"
+
+#if wxUSE_SCROLLBAR
+    #include "wx/scrolwin.h"
+#endif // wxUSE_SCROLLBAR
+
+#ifdef __WXGTK__
+    #include "wx/gtk/private/backend.h"
+#endif // __WXGTK__
+
+#if defined(__WXMSW__) && wxUSE_ACCESSIBILITY
+    #include "wx/msw/private.h"
+    #include "wx/msw/ole/oleutils.h"
+    #include <oleacc.h>
+#endif // __WXMSW__ && wxUSE_ACCESSIBILITY
+
 
 class WindowTestCase
 {
@@ -37,8 +58,7 @@ public:
         // Without this, when running this test suite solo it succeeds,
         // but not when running it together with the other tests !!
         // Not needed when run under Xvfb display.
-        for ( wxStopWatch sw; sw.Time() < 50; )
-            wxYield();
+        YieldForAWhile();
     #endif
     }
 
@@ -53,23 +73,234 @@ protected:
     wxDECLARE_NO_COPY_CLASS(WindowTestCase);
 };
 
-TEST_CASE_METHOD(WindowTestCase, "Window::ShowHideEvent", "[window]")
+#if wxUSE_HELP
+class ContextHelpCaptureLostTester : public wxWindow
 {
-#if defined(__WXMSW__)
-    EventCounter show(m_window, wxEVT_SHOW);
+public:
+    ContextHelpCaptureLostTester(wxWindow* parent)
+        : wxWindow(parent, wxID_ANY)
+    {
+    }
 
-    CHECK(m_window->IsShown());
+    void SimulateCaptureLost()
+    {
+        DoReleaseMouse();
+        NotifyCaptureLost();
+    }
+};
 
-    m_window->Show(false);
+// Allows checking whether the context help mode is still active.
+class ContextHelpTester : public wxContextHelp
+{
+public:
+    explicit ContextHelpTester(wxWindow* win)
+        : wxContextHelp(win, false)
+    {
+    }
 
-    CHECK(!m_window->IsShown());
+    bool IsInHelp() const { return m_inHelp; }
+};
 
-    m_window->Show();
+class ContextHelpCaptureLostState : public wxEvtHandler
+{
+public:
+    ContextHelpCaptureLostState(ContextHelpCaptureLostTester* win,
+                                const ContextHelpTester& contextHelp)
+        : m_win(win),
+          m_contextHelp(contextHelp),
+          m_captureLostTimer(this),
+          m_fallbackTimer(this)
+    {
+        Bind(wxEVT_TIMER, &ContextHelpCaptureLostState::OnTimer, this);
+    }
 
-    CHECK(m_window->IsShown());
+    void Start()
+    {
+        m_captureLostTimer.StartOnce(1);
+    }
+
+    void Done()
+    {
+        m_done = true;
+        m_captureLostTimer.Stop();
+        m_fallbackTimer.Stop();
+    }
+
+    bool WasCaptureLostSent() const { return m_captureLostSent; }
+    bool WasFallbackUsed() const { return m_fallbackUsed; }
+
+private:
+    void OnTimer(wxTimerEvent& event)
+    {
+        if ( m_done )
+            return;
+
+        if ( &event.GetTimer() == &m_captureLostTimer )
+        {
+            m_captureLostSent = true;
+            m_win->SimulateCaptureLost();
+            m_fallbackTimer.StartOnce(100);
+            return;
+        }
+
+        // Under some ports (notably wxQt) the timer can fire before control
+        // returns from wxContextHelp::EventLoop() even if the context help
+        // mode had been already ended, so check for this.
+        if ( !m_contextHelp.IsInHelp() )
+            return;
+
+        m_fallbackUsed = true;
+
+        wxKeyEvent eventKey(wxEVT_KEY_DOWN);
+        eventKey.SetEventObject(m_win);
+        m_win->GetEventHandler()->ProcessEvent(eventKey);
+    }
+
+    ContextHelpCaptureLostTester* const m_win;
+    const ContextHelpTester& m_contextHelp;
+    wxTimer m_captureLostTimer;
+    wxTimer m_fallbackTimer;
+    bool m_done = false;
+    bool m_captureLostSent = false;
+    bool m_fallbackUsed = false;
+};
+#endif // wxUSE_HELP
+
+#if wxUSE_SCROLLBAR
+
+class ScrollCountingWindow : public wxScrolledWindow
+{
+public:
+    ScrollCountingWindow(wxWindow* parent)
+        : wxScrolledWindow(parent, wxID_ANY, wxDefaultPosition, wxSize(100, 100))
+    {
+        SetScrollRate(10, 10);
+        SetVirtualSize(1000, 1000);
+        ResetScrollWindowCalls();
+    }
+
+    virtual void ScrollWindow(int dx, int dy,
+                              const wxRect* rect = nullptr) override
+    {
+        wxUnusedVar(rect);
+
+        m_scrollWindowCallCount++;
+        m_lastScrollWindowDelta = wxPoint(dx, dy);
+        m_lastScrollWindowViewStart = GetViewStart();
+    }
+
+    void ResetScrollWindowCalls()
+    {
+        m_scrollWindowCallCount = 0;
+        m_lastScrollWindowDelta = wxPoint();
+        m_lastScrollWindowViewStart = wxDefaultPosition;
+    }
+
+    int GetScrollWindowCallCount() const { return m_scrollWindowCallCount; }
+
+    wxPoint GetLastScrollWindowDelta() const { return m_lastScrollWindowDelta; }
+
+    // Return the view start as it was during the last ScrollWindow() call.
+    wxPoint GetLastScrollWindowViewStart() const
+    {
+        return m_lastScrollWindowViewStart;
+    }
+
+private:
+    int m_scrollWindowCallCount = 0;
+    wxPoint m_lastScrollWindowDelta;
+    wxPoint m_lastScrollWindowViewStart;
+};
+
+#endif // wxUSE_SCROLLBAR
+
+static void DoTestShowHideEvent(wxWindow* window)
+{
+    EventCounter show(window, wxEVT_SHOW);
+
+    CHECK(window->IsShown());
+
+    window->Show(false);
+
+    CHECK(!window->IsShown());
+
+    window->Show();
+
+    CHECK(window->IsShown());
 
     CHECK( show.GetCount() == 2 );
-#endif // __WXMSW__
+}
+
+#if wxUSE_SCROLLBAR
+
+TEST_CASE_METHOD(WindowTestCase, "Window::ScrolledWindowPhysicalScrolling",
+                 "[window][scroll]")
+{
+    auto win = make_unique<ScrollCountingWindow>(wxTheApp->GetTopWindow());
+
+    win->EnableScrolling(false, false);
+    win->Scroll(1, 2);
+
+    CHECK( win->GetViewStart() == wxPoint(1, 2) );
+    CHECK( win->GetScrollWindowCallCount() == 0 );
+
+    win->Scroll(0, 0);
+    win->EnableScrolling(true, false);
+    win->ResetScrollWindowCalls();
+
+    win->Scroll(1, 2);
+
+    CHECK( win->GetViewStart() == wxPoint(1, 2) );
+    REQUIRE( win->GetScrollWindowCallCount() == 1 );
+    CHECK( win->GetLastScrollWindowDelta() == wxPoint(-10, 0) );
+}
+
+TEST_CASE_METHOD(WindowTestCase, "Window::ScrolledWindowViewStart",
+                 "[window][scroll]")
+{
+    auto win = make_unique<ScrollCountingWindow>(wxTheApp->GetTopWindow());
+
+    // ScrollWindow() must be called after updating the scroll position, so
+    // that it can be used, e.g. to convert between logical and device
+    // coordinates, in the overridden version of this function.
+    win->Scroll(0, 3);
+
+    REQUIRE( win->GetScrollWindowCallCount() == 1 );
+    CHECK( win->GetLastScrollWindowDelta() == wxPoint(0, -30) );
+    CHECK( win->GetLastScrollWindowViewStart() == wxPoint(0, 3) );
+
+    win->ResetScrollWindowCalls();
+    win->Scroll(2, -1);
+
+    REQUIRE( win->GetScrollWindowCallCount() == 1 );
+    CHECK( win->GetLastScrollWindowDelta() == wxPoint(-20, 0) );
+    CHECK( win->GetLastScrollWindowViewStart() == wxPoint(2, 3) );
+
+    // When scrolling in both directions, ScrollWindow() is called twice and
+    // the view start must be fully updated by the time of the last call.
+    win->ResetScrollWindowCalls();
+    win->Scroll(1, 1);
+
+    REQUIRE( win->GetScrollWindowCallCount() == 2 );
+    CHECK( win->GetLastScrollWindowViewStart() == wxPoint(1, 1) );
+}
+
+#endif // wxUSE_SCROLLBAR
+
+TEST_CASE_METHOD(WindowTestCase, "Window::ShowHideEvent", "[window]")
+{
+    SECTION("Normal window")
+    {
+        DoTestShowHideEvent(m_window);
+    }
+
+    SECTION("Frozen window")
+    {
+        wxWindowUpdateLocker freeze(m_window->GetParent() );
+        REQUIRE( m_window->IsFrozen() );
+
+        DoTestShowHideEvent(m_window);
+    }
 }
 
 TEST_CASE_METHOD(WindowTestCase, "Window::KeyEvent", "[window]")
@@ -97,6 +328,85 @@ TEST_CASE_METHOD(WindowTestCase, "Window::KeyEvent", "[window]")
 #endif
 }
 
+TEST_CASE_METHOD(WindowTestCase, "Window::MouseWheel", "[window]")
+{
+#if wxUSE_UIACTIONSIMULATOR
+    if ( !EnableUITests() )
+        return;
+
+    struct WheelInfo
+    {
+        wxMouseWheelAxis axis;
+        int rotation;
+    };
+    std::vector<WheelInfo> wheels;
+
+    m_window->Bind(wxEVT_MOUSEWHEEL, [&wheels](wxMouseEvent& event)
+        {
+            wheels.push_back({event.GetWheelAxis(), event.GetWheelRotation()});
+        });
+
+    wxUIActionSimulator sim;
+
+    // Before Windows 10, wheel events were sent to the focused window rather
+    // than the one under the mouse, so make sure our window has focus.
+    m_window->SetFocus();
+
+    const wxRect rect = m_window->GetScreenRect();
+    sim.MouseMove(rect.GetPosition() + rect.GetSize() / 2);
+    wxYield();
+
+    int rotation = 0;
+    wxMouseWheelAxis axis = wxMOUSE_WHEEL_VERTICAL;
+
+    SECTION("Up")
+    {
+        rotation = 1;
+    }
+
+    SECTION("Down")
+    {
+        rotation = -2;
+    }
+
+    SECTION("Right")
+    {
+        rotation = 1;
+        axis = wxMOUSE_WHEEL_HORIZONTAL;
+    }
+
+    SECTION("Left")
+    {
+        rotation = -2;
+        axis = wxMOUSE_WHEEL_HORIZONTAL;
+    }
+
+    REQUIRE( sim.MouseWheel(rotation, axis) );
+
+    WaitFor("mouse wheel event", [&wheels]() { return !wheels.empty(); });
+
+    // We may get more than one event for a multi-notch rotation, so wait a bit
+    // more to let all of them arrive.
+    YieldForAWhile();
+
+    REQUIRE( !wheels.empty() );
+
+    // Don't check the exact rotation value as it depends on the platform and
+    // possibly the user settings, but its sign must be correct.
+    int total = 0;
+    for ( const auto& wheel : wheels )
+    {
+        CHECK( wheel.axis == axis );
+        total += wheel.rotation;
+    }
+
+    if ( rotation > 0 )
+        CHECK( total > 0 );
+    else
+        CHECK( total < 0 );
+#endif // wxUSE_UIACTIONSIMULATOR
+}
+
 TEST_CASE_METHOD(WindowTestCase, "Window::FocusEvent", "[window]")
 {
 #ifndef __WXOSX__
@@ -117,8 +427,8 @@ TEST_CASE_METHOD(WindowTestCase, "Window::FocusEvent", "[window]")
 
     wxButton* button = new wxButton(wxTheApp->GetTopWindow(), wxID_ANY);
 
-    wxYield();
     button->SetFocus();
+    wxYield();
 
     CHECK( killfocus.GetCount() == 1 );
     CHECK(!m_window->HasFocus());
@@ -127,7 +437,7 @@ TEST_CASE_METHOD(WindowTestCase, "Window::FocusEvent", "[window]")
 
 TEST_CASE_METHOD(WindowTestCase, "Window::Mouse", "[window]")
 {
-    wxCursor cursor(wxCURSOR_CHAR);
+    wxCursor cursor(wxCURSOR_HAND);
     m_window->SetCursor(cursor);
 
     CHECK(m_window->GetCursor().IsOk());
@@ -135,7 +445,7 @@ TEST_CASE_METHOD(WindowTestCase, "Window::Mouse", "[window]")
 #if wxUSE_CARET
     CHECK(!m_window->GetCaret());
 
-    wxCaret* caret = NULL;
+    wxCaret* caret = nullptr;
 
     // Try creating the caret in two different, but normally equivalent, ways.
     SECTION("Caret 1-step")
@@ -162,6 +472,39 @@ TEST_CASE_METHOD(WindowTestCase, "Window::Mouse", "[window]")
 
     CHECK(!m_window->HasCapture());
 }
+
+#if wxUSE_HELP
+TEST_CASE_METHOD(WindowTestCase, "Window::ContextHelpCaptureLost",
+                 "[window][help]")
+{
+#ifdef __WXOSX__
+    if ( IsAutomaticTest() )
+    {
+        // For some not well-understood reason this test results in failures in
+        // another test run later in the CI: somehow executing it makes the
+        // child outside of the refreshed rectangle still be repainted there.
+        WARN("Skipping the test result in Window::Refresh test failures later.");
+        return;
+    }
+#endif // __WXOSX__
+
+    auto const winPtr =
+        make_unique<ContextHelpCaptureLostTester>(wxTheApp->GetTopWindow());
+    auto* const win = winPtr.get();
+
+    ContextHelpTester contextHelp(win);
+
+    ContextHelpCaptureLostState state(win, contextHelp);
+    state.Start();
+
+    CHECK(contextHelp.BeginContextHelp(win));
+
+    state.Done();
+    CHECK(state.WasCaptureLostSent());
+    CHECK(!state.WasFallbackUsed());
+    CHECK(!win->HasCapture());
+}
+#endif // wxUSE_HELP
 
 TEST_CASE_METHOD(WindowTestCase, "Window::Properties", "[window]")
 {
@@ -205,6 +548,23 @@ TEST_CASE_METHOD(WindowTestCase, "Window::ToolTip", "[window]")
 }
 #endif // wxUSE_TOOLTIPS
 
+#if wxUSE_RICHTOOLTIP
+TEST_CASE_METHOD(WindowTestCase, "Window::RichToolTip", "[window][richtooltip]")
+{
+    wxRichToolTip tip1("First title", "First message");
+    tip1.SetTimeout(100);
+    tip1.ShowFor(m_window);
+
+    wxRichToolTip tip2("Second title", "Second message");
+    tip2.SetTimeout(10);
+    tip2.ShowFor(m_window);
+
+    YieldForAWhile();
+
+    SUCCEED();
+}
+#endif // wxUSE_RICHTOOLTIP
+
 TEST_CASE_METHOD(WindowTestCase, "Window::Help", "[window]")
 {
 #if wxUSE_HELP
@@ -220,21 +580,21 @@ TEST_CASE_METHOD(WindowTestCase, "Window::Help", "[window]")
 
 TEST_CASE_METHOD(WindowTestCase, "Window::Parent", "[window]")
 {
-    CHECK( m_window->GetGrandParent() == static_cast<wxWindow*>(NULL) );
+    CHECK( m_window->GetGrandParent() == static_cast<wxWindow*>(nullptr) );
     CHECK( m_window->GetParent() == wxTheApp->GetTopWindow() );
 }
 
 TEST_CASE_METHOD(WindowTestCase, "Window::Siblings", "[window]")
 {
-    CHECK( m_window->GetNextSibling() == static_cast<wxWindow*>(NULL) );
-    CHECK( m_window->GetPrevSibling() == static_cast<wxWindow*>(NULL) );
+    CHECK( m_window->GetNextSibling() == static_cast<wxWindow*>(nullptr) );
+    CHECK( m_window->GetPrevSibling() == static_cast<wxWindow*>(nullptr) );
 
     wxWindow* newwin = new wxWindow(wxTheApp->GetTopWindow(), wxID_ANY);
 
     CHECK( m_window->GetNextSibling() == newwin );
-    CHECK( m_window->GetPrevSibling() == static_cast<wxWindow*>(NULL) );
+    CHECK( m_window->GetPrevSibling() == static_cast<wxWindow*>(nullptr) );
 
-    CHECK( newwin->GetNextSibling() == static_cast<wxWindow*>(NULL) );
+    CHECK( newwin->GetNextSibling() == static_cast<wxWindow*>(nullptr) );
     CHECK( newwin->GetPrevSibling() == m_window );
 
     wxDELETE(newwin);
@@ -286,6 +646,60 @@ TEST_CASE_METHOD(WindowTestCase, "Window::Focus", "[window]")
         CHECK_FOCUS_IS(m_window);
     }
 #endif
+}
+
+TEST_CASE("Window::ContainerFocus", "[window][focus]")
+{
+    long style = wxTAB_TRAVERSAL;
+
+    SECTION("Not scrollable") { }
+
+    SECTION("Scrollable") { style |= wxVSCROLL; }
+
+    auto panel = make_unique<wxPanel>(wxTheApp->GetTopWindow(), wxID_ANY,
+                                      wxDefaultPosition, wxDefaultSize, style);
+    const bool scrollable = (style & wxVSCROLL) != 0;
+
+    // Windows without any children at all can still be focused, as they may
+    // handle the keyboard input themselves.
+    CHECK( panel->AcceptsFocus() );
+    CHECK( panel->AcceptsFocusFromKeyboard() );
+
+    new wxStaticText(panel.get(), wxID_ANY, "Label");
+
+    // But TAB shouldn't stop on a window containing only children which can't
+    // be focused, unless it can be scrolled from keyboard.
+    CHECK( panel->AcceptsFocus() );
+    CHECK( panel->AcceptsFocusFromKeyboard() == scrollable );
+
+    // Unless explicitly requested.
+    panel->EnableFocusFromKeyboard();
+    CHECK( panel->AcceptsFocusFromKeyboard() );
+
+    // Buttons don't accept focus from keyboard under macOS by default, so use
+    // a control which always does.
+    new wxTextCtrl(panel.get(), wxID_ANY);
+
+    CHECK( panel->AcceptsFocusFromKeyboard() );
+}
+
+TEST_CASE("Window::NestedContainerFocus", "[window][focus]")
+{
+    auto outer = make_unique<wxPanel>(wxTheApp->GetTopWindow());
+    auto inner = new wxPanel(outer.get());
+    new wxStaticText(inner, wxID_ANY, "Label");
+
+    // Neither the inner panel, containing only a label, nor the outer one,
+    // containing only the inner panel, should be focusable from keyboard.
+    CHECK( !inner->AcceptsFocusFromKeyboard() );
+    CHECK( !outer->AcceptsFocusFromKeyboard() );
+
+    // But both of them should become focusable as soon as there is something
+    // focusable inside them.
+    new wxTextCtrl(inner, wxID_ANY);
+
+    CHECK( inner->AcceptsFocusFromKeyboard() );
+    CHECK( outer->AcceptsFocusFromKeyboard() );
 }
 
 TEST_CASE_METHOD(WindowTestCase, "Window::Positioning", "[window]")
@@ -409,6 +823,107 @@ TEST_CASE_METHOD(WindowTestCase, "Window::Enable", "[window]")
     CHECK(child->IsThisEnabled());
 }
 
+namespace
+{
+
+// Window recording the calls to OnEnabledStateChanged() as a string of "+"
+// (enabled) and "-" (disabled) characters.
+class EnabledStateTrackingWindow : public wxWindow
+{
+public:
+    explicit EnabledStateTrackingWindow(wxWindow* parent)
+        : wxWindow(parent, wxID_ANY)
+    {
+    }
+
+    // Return the calls made since the last call to this function.
+    wxString GetCalls()
+    {
+        wxString calls;
+        calls.swap(m_calls);
+        return calls;
+    }
+
+protected:
+    void OnEnabledStateChanged(bool enabled) override
+    {
+        m_calls += enabled ? '+' : '-';
+    }
+
+private:
+    wxString m_calls;
+};
+
+} // anonymous namespace
+
+TEST_CASE_METHOD(WindowTestCase, "Window::OnEnabledStateChanged", "[window]")
+{
+    auto* const parent = new EnabledStateTrackingWindow(m_window);
+    auto* const child = new EnabledStateTrackingWindow(parent);
+
+    m_window->Disable();
+    CHECK( parent->GetCalls() == "-" );
+    CHECK( child->GetCalls() == "-" );
+
+    // Disabling a window inside an already disabled one doesn't change its
+    // state, and neither does enabling its parent back.
+    parent->Disable();
+    CHECK( parent->GetCalls() == "" );
+    CHECK( child->GetCalls() == "" );
+
+    m_window->Enable();
+    CHECK( parent->GetCalls() == "" );
+    CHECK( child->GetCalls() == "" );
+
+    parent->Enable();
+    CHECK( parent->GetCalls() == "+" );
+    CHECK( child->GetCalls() == "+" );
+
+    // A disabled child is not affected by its parent state.
+    child->Disable();
+    CHECK( child->GetCalls() == "-" );
+
+    parent->Disable();
+    parent->Enable();
+    CHECK( parent->GetCalls() == "-+" );
+    CHECK( child->GetCalls() == "" );
+
+    child->Enable();
+    CHECK( child->GetCalls() == "+" );
+
+    SECTION("Reparent")
+    {
+        wxWindow* const other = new wxWindow(m_window->GetParent(), wxID_ANY);
+        other->Disable();
+
+        parent->Reparent(other);
+        CHECK( parent->GetCalls() == "-" );
+        CHECK( child->GetCalls() == "-" );
+
+        parent->Reparent(m_window);
+        CHECK( parent->GetCalls() == "+" );
+        CHECK( child->GetCalls() == "+" );
+    }
+
+    SECTION("TLW")
+    {
+        // The state of the TLW itself is ignored.
+        wxWindow* const tlw = wxGetTopLevelParent(m_window);
+        tlw->Disable();
+        CHECK( parent->GetCalls() == "" );
+        CHECK( child->GetCalls() == "" );
+
+        parent->Disable();
+        parent->Enable();
+        CHECK( parent->GetCalls() == "-+" );
+        CHECK( child->GetCalls() == "-+" );
+
+        tlw->Enable();
+        CHECK( parent->GetCalls() == "" );
+        CHECK( child->GetCalls() == "" );
+    }
+}
+
 TEST_CASE_METHOD(WindowTestCase, "Window::FindWindowBy", "[window]")
 {
     m_window->SetId(wxID_HIGHEST + 1);
@@ -419,23 +934,136 @@ TEST_CASE_METHOD(WindowTestCase, "Window::FindWindowBy", "[window]")
     CHECK( wxWindow::FindWindowByName("name") == m_window );
     CHECK( wxWindow::FindWindowByLabel("label") == m_window );
 
-    CHECK( wxWindow::FindWindowById(wxID_HIGHEST + 3) == NULL );
-    CHECK( wxWindow::FindWindowByName("noname") == NULL );
-    CHECK( wxWindow::FindWindowByLabel("nolabel") == NULL );
+    CHECK( wxWindow::FindWindowById(wxID_HIGHEST + 3) == nullptr );
+    CHECK( wxWindow::FindWindowByName("noname") == nullptr );
+    CHECK( wxWindow::FindWindowByLabel("nolabel") == nullptr );
 }
 
 TEST_CASE_METHOD(WindowTestCase, "Window::SizerErrors", "[window][sizer][error]")
 {
     wxWindow* const child = new wxWindow(m_window, wxID_ANY);
-    wxScopedPtr<wxSizer> const sizer1(new wxBoxSizer(wxHORIZONTAL));
-    wxScopedPtr<wxSizer> const sizer2(new wxBoxSizer(wxHORIZONTAL));
+    auto const sizer1 = make_unique<wxBoxSizer>(wxHORIZONTAL);
+    auto const sizer2 = make_unique<wxBoxSizer>(wxHORIZONTAL);
 
     REQUIRE_NOTHROW( sizer1->Add(child) );
+#ifdef __WXDEBUG__
     CHECK_THROWS_AS( sizer1->Add(child), TestAssertFailure );
     CHECK_THROWS_AS( sizer2->Add(child), TestAssertFailure );
+#else
+    CHECK_NOTHROW( sizer1->Add(child) );
+    CHECK_NOTHROW( sizer2->Add(child) );
+#endif
 
     CHECK_NOTHROW( sizer1->Detach(child) );
     CHECK_NOTHROW( sizer2->Add(child) );
 
     REQUIRE_NOTHROW( delete child );
 }
+
+TEST_CASE_METHOD(WindowTestCase, "Window::Refresh", "[window]")
+{
+    wxWindow* const parent = m_window;
+
+    wxWindow* const child1 = new wxWindow(parent, wxID_ANY, wxPoint(10, 20), wxSize(80, 50));
+    wxWindow* const child2 = new wxWindow(parent, wxID_ANY, wxPoint(110, 20), wxSize(80, 50));
+    wxWindow* const child3 = new wxWindow(parent, wxID_ANY, wxPoint(210, 20), wxSize(80, 50));
+
+    m_window->SetSize(300, 100);
+
+    // to help see the windows when debugging
+    parent->SetBackgroundColour(*wxBLACK);
+    child1->SetBackgroundColour(*wxBLUE);
+    child2->SetBackgroundColour(*wxRED);
+    child3->SetBackgroundColour(*wxGREEN);
+
+    // Notice that using EventCounter here will give incorrect results,
+    // so we have to bind each window to a distinct event handler instead.
+
+    bool isParentPainted = false;
+    bool isChild1Painted = false;
+    bool isChild2Painted = false;
+    bool isChild3Painted = false;
+
+    const auto setFlagOnPaint = [](wxWindow* win, bool* flag)
+    {
+        win->Bind(wxEVT_PAINT, [=](wxPaintEvent&)
+        {
+            wxPaintDC dc(win);
+            *flag = true;
+        });
+    };
+
+    setFlagOnPaint(parent, &isParentPainted);
+    setFlagOnPaint(child1, &isChild1Painted);
+    setFlagOnPaint(child2, &isChild2Painted);
+    setFlagOnPaint(child3, &isChild3Painted);
+
+    // Ensure that none of the windows needs to be redrawn before calling
+    // RefreshRect() below, otherwise child1 could still get repainted even if
+    // we don't refresh it. All of them must be painted at least once because
+    // they were just created, but just calling wxYield() once is not enough
+    // for this, at least under Mac, where painting happens asynchronously and
+    // may be postponed until later, so wait until they're actually painted.
+    //
+    // Note that this also takes care of any repaints still pending for the
+    // parent window because another window overlapping it, created by a
+    // previously running test, was destroyed, as the entire parent is
+    // invalidated by changing its size and background colour above anyhow.
+    WaitFor("initial repaint", [&]()
+    {
+        return isParentPainted &&
+               isChild1Painted && isChild2Painted && isChild3Painted;
+    });
+
+    // Now initialize/reset the flags before calling RefreshRect()
+    isParentPainted =
+    isChild1Painted =
+    isChild2Painted =
+    isChild3Painted = false;
+
+    parent->RefreshRect(wxRect(150, 10, 300, 80));
+
+    WaitFor("parent repaint", [&]() { return isParentPainted; }, 100);
+
+    // child1 should be the only window not to receive the wxEVT_PAINT event
+    // because it does not intersect with the refreshed rectangle. However,
+    // GTK3 with a native Wayland backend doesn't support partial redraws at
+    // all: any invalidation anywhere ends up repainting every window with
+    // its own full bounds, so don't check this there.
+    if ( !IsRunningUnderWayland() )
+        CHECK(isChild1Painted == false);
+    CHECK(isParentPainted == true);
+    CHECK(isChild2Painted == true);
+    CHECK(isChild3Painted == true);
+}
+
+#if defined(__WXMSW__) && wxUSE_ACCESSIBILITY
+
+TEST_CASE("Window::AccessibleName", "[window][accessibility]")
+{
+    auto button = make_unique<wxButton>(wxTheApp->GetTopWindow(), wxID_ANY, "Label");
+    button->SetAccessibleName("Name");
+
+    IAccessible* acc = nullptr;
+    REQUIRE( ::AccessibleObjectFromWindow(GetHwndOf(button.get()),
+                                          static_cast<DWORD>(OBJID_CLIENT),
+                                          IID_IAccessible,
+                                          reinterpret_cast<void**>(&acc)) == S_OK );
+
+    VARIANT self;
+    self.vt = VT_I4;
+    self.lVal = CHILDID_SELF;
+
+    wxBasicString name;
+    CHECK( acc->get_accName(self, name.ByRef()) == S_OK );
+    CHECK( wxString(name) == "Name" );
+
+    button->SetAccessibleName(wxString());
+    wxBasicString defaultName;
+    CHECK( acc->get_accName(self, defaultName.ByRef()) == S_OK );
+    CHECK( wxString(defaultName) == "Label" );
+
+    acc->Release();
+}
+
+#endif // __WXMSW__ && wxUSE_ACCESSIBILITY
